@@ -1,26 +1,26 @@
 import {
-  BriefcaseBusiness,
+  Briefcase,
   CalendarDays,
+  CheckCircle2,
+  Clock3,
   Grid2X2,
-  PauseCircle,
   Pencil,
-  PlayCircle,
   Plus,
   Search,
   Table2,
   Trash2,
-  Users,
-  XCircle,
+  UserPlus,
+  UsersRound,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { useNavigate } from "react-router-dom";
-import Button from "../components/Button";
-import Input from "../components/Input";
-import StatCard from "../components/StatCard";
 import { useAuth } from "../context/AuthContext";
 import * as projectService from "../services/projectService";
 import * as userService from "../services/userService";
+
+const ORANGE = "#FF6B35";
 
 function normalize(value) {
   return String(value || "")
@@ -53,31 +53,32 @@ function normalizeId(value) {
 
 function extractArray(response) {
   if (Array.isArray(response)) return response;
-  if (Array.isArray(response?.users)) return response.users;
   if (Array.isArray(response?.projects)) return response.projects;
+  if (Array.isArray(response?.users)) return response.users;
+  if (Array.isArray(response?.employees)) return response.employees;
   if (Array.isArray(response?.data)) return response.data;
   if (Array.isArray(response?.items)) return response.items;
   return [];
 }
 
-function getProjectId(project) {
+function getProjectId(project, index = 0) {
   return String(
     project?.id ||
       project?._id ||
       project?.projectId ||
       project?.project_id ||
       project?.uid ||
-      ""
+      index + 1
   );
 }
 
-function getProjectName(project) {
+function getProjectName(project, index = 0) {
   return (
     project?.name ||
     project?.title ||
     project?.projectName ||
     project?.project_name ||
-    "Untitled Project"
+    `Project ${index + 1}`
   );
 }
 
@@ -100,7 +101,7 @@ function getProjectDepartment(project) {
     project?.division ||
     project?.divisionName ||
     project?.division_name ||
-    "-"
+    "Unassigned"
   );
 }
 
@@ -109,30 +110,10 @@ function getProjectManager(project) {
     project?.manager ||
     project?.managerName ||
     project?.manager_name ||
-    project?.assignedManager ||
-    project?.assigned_manager ||
+    project?.lead ||
+    project?.leadName ||
+    project?.lead_name ||
     "-"
-  );
-}
-
-function getProjectStartDate(project) {
-  return (
-    project?.startDate ||
-    project?.start_date ||
-    project?.fromDate ||
-    project?.from_date ||
-    ""
-  );
-}
-
-function getProjectEndDate(project) {
-  return (
-    project?.endDate ||
-    project?.end_date ||
-    project?.dueDate ||
-    project?.due_date ||
-    project?.deadline ||
-    ""
   );
 }
 
@@ -140,51 +121,90 @@ function getProjectPriority(project) {
   return project?.priority || project?.projectPriority || "medium";
 }
 
-function normalizeStatus(value) {
-  const status = normalize(value);
-
-  if (!status) return "active";
+function getProjectStatus(project) {
+  const status = normalize(
+    project?.status ||
+      project?.projectStatus ||
+      project?.project_status ||
+      "active"
+  );
 
   if (
-    ["active", "approved", "open", "ongoing", "in progress"].includes(status)
+    status === "deleted" ||
+    status === "delete" ||
+    status === "removed" ||
+    status === "archived"
   ) {
-    return "active";
+    return "deleted";
   }
 
-  if (["hold", "on hold", "paused", "pause"].includes(status)) {
+  if (
+    status === "on hold" ||
+    status === "hold" ||
+    status === "onhold" ||
+    status === "paused" ||
+    status === "pause"
+  ) {
     return "on_hold";
   }
 
   if (
-    ["abort", "aborted", "cancelled", "canceled", "rejected"].includes(status)
+    status === "completed" ||
+    status === "complete" ||
+    status === "done" ||
+    status === "finished"
   ) {
-    return "aborted";
-  }
-
-  if (["complete", "completed", "done", "finished"].includes(status)) {
     return "completed";
   }
 
-  return status.replaceAll(" ", "_");
+  return "active";
 }
 
-function formatStatus(value) {
-  const status = normalizeStatus(value);
-
-  if (status === "active") return "Active";
-  if (status === "on_hold") return "On Hold";
-  if (status === "aborted") return "Cancelled";
-  if (status === "completed") return "Completed";
-
-  return String(value || "Active")
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
+function getStatusLabel(status) {
+  if (status === "on_hold") return "ON HOLD";
+  if (status === "deleted") return "DELETED";
+  if (status === "completed") return "COMPLETED";
+  return "ACTIVE";
 }
 
-function formatPriority(value) {
-  return String(value || "medium")
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
+function getStatusClass(status) {
+  if (status === "deleted") {
+    return "bg-red-50 text-red-600";
+  }
+
+  if (status === "on_hold") {
+    return "bg-yellow-50 text-yellow-700";
+  }
+
+  if (status === "completed") {
+    return "bg-emerald-50 text-emerald-600";
+  }
+
+  return "bg-blue-50 text-blue-600";
+}
+
+function getStartDate(project) {
+  return (
+    project?.startDate ||
+    project?.start_date ||
+    project?.fromDate ||
+    project?.from_date ||
+    project?.createdAt ||
+    ""
+  );
+}
+
+function getEndDate(project) {
+  return (
+    project?.endDate ||
+    project?.end_date ||
+    project?.dueDate ||
+    project?.due_date ||
+    project?.deadline ||
+    project?.toDate ||
+    project?.to_date ||
+    ""
+  );
 }
 
 function formatDate(value) {
@@ -192,7 +212,7 @@ function formatDate(value) {
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return value;
+  if (Number.isNaN(date.getTime())) return String(value);
 
   return date.toLocaleDateString("en-IN", {
     day: "2-digit",
@@ -201,16 +221,68 @@ function formatDate(value) {
   });
 }
 
-function toInputDate(value) {
-  if (!value) return "";
+function getTimeline(project) {
+  const start = formatDate(getStartDate(project));
+  const end = formatDate(getEndDate(project));
 
-  const date = new Date(value);
+  if (start === "-" && end === "-") return "-";
+  if (start === "-") return end;
+  if (end === "-") return start;
 
-  if (Number.isNaN(date.getTime())) {
-    return String(value).slice(0, 10);
+  return `${start} to ${end}`;
+}
+
+function getProjectTasks(project) {
+  const tasks =
+    project?.tasks ||
+    project?.taskList ||
+    project?.task_list ||
+    project?.todos ||
+    project?.toDos ||
+    project?.checklist ||
+    [];
+
+  return Array.isArray(tasks) ? tasks : [];
+}
+
+function getTaskStatus(task) {
+  return normalize(task?.status || task?.taskStatus || task?.task_status || "");
+}
+
+function isTaskComplete(task) {
+  const status = getTaskStatus(task);
+
+  return (
+    task?.done === true ||
+    task?.completed === true ||
+    status === "done" ||
+    status === "complete" ||
+    status === "completed"
+  );
+}
+
+function getProjectProgress(project) {
+  const direct =
+    project?.progress ??
+    project?.completion ??
+    project?.completionPercentage ??
+    project?.completion_percentage ??
+    project?.progressPercentage ??
+    project?.progress_percentage;
+
+  const directNumber = Number(direct);
+
+  if (Number.isFinite(directNumber)) {
+    return Math.max(0, Math.min(100, Math.round(directNumber)));
   }
 
-  return date.toISOString().slice(0, 10);
+  const tasks = getProjectTasks(project);
+
+  if (!tasks.length) return 0;
+
+  const completed = tasks.filter(isTaskComplete).length;
+
+  return Math.round((completed / tasks.length) * 100);
 }
 
 function getUserId(user) {
@@ -242,8 +314,8 @@ function getUserName(user) {
   );
 }
 
-function getUserRole(user) {
-  return user?.designation || user?.role || user?.position || "Team Member";
+function getUserEmail(user) {
+  return user?.email || user?.userEmail || user?.user_email || "";
 }
 
 function getUserDepartment(user) {
@@ -254,64 +326,60 @@ function getUserDepartment(user) {
     user?.division ||
     user?.divisionName ||
     user?.division_name ||
-    "-"
+    "Unassigned"
   );
 }
 
-function isEmployeeUser(user) {
-  const role = normalize(user?.role || user?.designation || user?.position);
+function getUserRole(user) {
+  return user?.designation || user?.role || user?.position || "Team Member";
+}
+
+function getInitials(name) {
+  return String(name || "U")
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+function getUserKeys(user) {
+  return [
+    getUserId(user),
+    user?.id,
+    user?._id,
+    user?.uid,
+    user?.userId,
+    user?.user_id,
+    user?.employeeId,
+    user?.employee_id,
+    user?.email,
+    user?.name,
+    user?.fullName,
+    user?.full_name,
+    user?.displayName,
+    user?.display_name,
+    user?.employeeName,
+    user?.employee_name,
+  ]
+    .filter(Boolean)
+    .map((item) => normalizeId(item).toLowerCase());
+}
+
+function isEmployeeLike(user) {
+  const role = normalize(getUserRole(user));
 
   if (!role) return true;
 
   return (
     role === "employee" ||
     role === "team member" ||
+    role === "teammember" ||
     role === "staff" ||
     role === "user" ||
     role === "member"
   );
-}
-
-function getTaskAssignedRaw(task) {
-  return (
-    task?.assignedTo ||
-    task?.assigned_to ||
-    task?.assignee ||
-    task?.assigneeName ||
-    task?.assignee_name ||
-    task?.employee ||
-    task?.employeeName ||
-    task?.employee_name ||
-    task?.user ||
-    ""
-  );
-}
-
-function getTaskAssignedId(task) {
-  return normalizeId(
-    task?.assignedToId ||
-      task?.assigned_to_id ||
-      task?.assigneeId ||
-      task?.assignee_id ||
-      task?.employeeId ||
-      task?.employee_id ||
-      task?.userId ||
-      task?.user_id ||
-      getTaskAssignedRaw(task)
-  );
-}
-
-function getProjectTasks(project) {
-  const tasks =
-    project?.tasks ||
-    project?.taskList ||
-    project?.task_list ||
-    project?.todos ||
-    project?.toDos ||
-    project?.checklist ||
-    [];
-
-  return Array.isArray(tasks) ? tasks : [];
 }
 
 function getProjectMemberSources(project) {
@@ -343,7 +411,7 @@ function getProjectMemberSources(project) {
     project?.employee_ids,
   ];
 
-  const explicitMembers = fields.flatMap((field) => {
+  return fields.flatMap((field) => {
     if (!field) return [];
 
     if (Array.isArray(field)) return field;
@@ -357,198 +425,595 @@ function getProjectMemberSources(project) {
 
     return [field];
   });
-
-  const taskMembers = getProjectTasks(project)
-    .map((task) => getTaskAssignedId(task) || getTaskAssignedRaw(task))
-    .filter(Boolean);
-
-  return [...explicitMembers, ...taskMembers];
 }
 
-function resolveMember(rawMember, users) {
-  const rawId = normalizeId(rawMember).toLowerCase();
+function getProjectAssignedEmployees(project, users) {
+  const memberSources = getProjectMemberSources(project);
 
-  const matchedUser = users.find((user) => {
-    const keys = [
-      getUserId(user),
-      user?.id,
-      user?._id,
-      user?.uid,
-      user?.userId,
-      user?.user_id,
-      user?.employeeId,
-      user?.employee_id,
-      user?.email,
-      user?.name,
-      user?.fullName,
-      user?.full_name,
-      user?.displayName,
-      user?.display_name,
-      user?.employeeName,
-      user?.employee_name,
-    ]
-      .filter(Boolean)
-      .map((item) => normalizeId(item).toLowerCase());
+  if (!memberSources.length) return [];
 
-    return keys.includes(rawId);
+  const memberKeys = memberSources
+    .flatMap((member) => {
+      if (typeof member === "object" && member) {
+        return getUserKeys(member);
+      }
+
+      return [normalizeId(member).toLowerCase()];
+    })
+    .filter(Boolean);
+
+  const matchedUsers = users.filter((user) => {
+    const userKeys = getUserKeys(user);
+    return userKeys.some((key) => memberKeys.includes(key));
   });
 
-  if (matchedUser) {
-    return {
-      ...matchedUser,
-      id: getUserId(matchedUser),
-      name: getUserName(matchedUser),
-      role: getUserRole(matchedUser),
-      department: getUserDepartment(matchedUser),
-    };
-  }
+  if (matchedUsers.length) return matchedUsers;
 
-  if (typeof rawMember === "object" && rawMember) {
+  return memberSources.map((member, index) => {
+    if (typeof member === "object" && member) return member;
+
     return {
-      ...rawMember,
-      id: normalizeId(rawMember),
-      name: getUserName(rawMember),
-      role: getUserRole(rawMember),
-      department: getUserDepartment(rawMember),
+      id: String(member || index),
+      name: String(member || `Member ${index + 1}`),
+      email: "",
     };
-  }
+  });
+}
+
+function getProjectMemberCount(project, users) {
+  return getProjectAssignedEmployees(project, users).length;
+}
+
+function makeAssignedPayload(selectedUsers) {
+  const cleanUsers = selectedUsers.map((user) => ({
+    id: getUserId(user),
+    uid: user?.uid || getUserId(user),
+    name: getUserName(user),
+    email: getUserEmail(user),
+    department: getUserDepartment(user),
+    role: getUserRole(user),
+  }));
 
   return {
-    id: normalizeId(rawMember),
-    name: String(rawMember || "Employee"),
-    role: "Team Member",
-    department: "-",
+    members: cleanUsers,
+    assignedMembers: cleanUsers,
+    assigned_members: cleanUsers,
+    assignedUsers: cleanUsers,
+    assigned_users: cleanUsers,
+    assignedEmployees: cleanUsers,
+    assigned_employees: cleanUsers,
+    employeeIds: cleanUsers.map((user) => user.id).filter(Boolean),
+    employee_ids: cleanUsers.map((user) => user.id).filter(Boolean),
   };
 }
 
-function getProjectMembers(project, users = []) {
-  const members = getProjectMemberSources(project)
-    .map((member) => resolveMember(member, users))
-    .filter((member) => member.id || member.name);
+const PROJECT_ASSIGNMENT_CACHE_KEY = "valencia_project_assignment_cache";
 
-  const map = new Map();
+function loadProjectAssignmentCache() {
+  try {
+    const raw = localStorage.getItem(PROJECT_ASSIGNMENT_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
-  members.forEach((member) => {
-    const key = String(member.id || member.email || member.name).toLowerCase();
+function saveProjectAssignmentCache(projects) {
+  localStorage.setItem(
+    PROJECT_ASSIGNMENT_CACHE_KEY,
+    JSON.stringify(Array.isArray(projects) ? projects : [])
+  );
+}
 
-    if (!key) return;
+function getProjectCacheKeys(project, index = 0) {
+  return [
+    getProjectId(project, index),
+    project?.id,
+    project?._id,
+    project?.projectId,
+    project?.project_id,
+    getProjectName(project, index),
+    project?.name,
+    project?.title,
+    project?.projectName,
+    project?.project_name,
+  ]
+    .filter(Boolean)
+    .map((item) => String(item).trim().toLowerCase());
+}
 
-    map.set(key, {
-      ...(map.get(key) || {}),
-      ...member,
-    });
+function upsertProjectAssignmentCache(project, index = 0) {
+  const cache = loadProjectAssignmentCache();
+  const nextKeys = getProjectCacheKeys(project, index);
+
+  const nextCache = cache.filter((item, itemIndex) => {
+    const itemKeys = getProjectCacheKeys(item, itemIndex);
+    return !itemKeys.some((key) => nextKeys.includes(key));
   });
 
-  return Array.from(map.values());
+  nextCache.push(project);
+  saveProjectAssignmentCache(nextCache);
 }
 
-function getProjectProgress(project) {
-  const value =
-    project?.progress ??
-    project?.completion ??
-    project?.completionPercentage ??
-    project?.completion_percentage ??
-    project?.progressPercentage ??
-    project?.progress_percentage ??
-    0;
+function syncProjectAssignmentCache(projects) {
+  const cache = loadProjectAssignmentCache();
+  const nextCache = [...cache];
 
-  const number = Number(value);
+  projects.forEach((project, index) => {
+    const projectKeys = getProjectCacheKeys(project, index);
 
-  if (!Number.isFinite(number)) return 0;
+    const existingIndex = nextCache.findIndex((item, itemIndex) => {
+      const itemKeys = getProjectCacheKeys(item, itemIndex);
+      return itemKeys.some((key) => projectKeys.includes(key));
+    });
 
-  return Math.max(0, Math.min(100, Math.round(number)));
-}
+    if (existingIndex >= 0) {
+      nextCache[existingIndex] = {
+        ...nextCache[existingIndex],
+        ...project,
+      };
+    } else {
+      nextCache.push(project);
+    }
+  });
 
-function getStatusClass(status) {
-  const normalized = normalizeStatus(status);
-
-  if (normalized === "active") {
-    return "bg-blue-50 text-blue-700";
-  }
-
-  if (normalized === "on_hold") {
-    return "bg-amber-50 text-amber-700";
-  }
-
-  if (normalized === "aborted") {
-    return "bg-red-50 text-red-700";
-  }
-
-  if (normalized === "completed") {
-    return "bg-emerald-50 text-emerald-700";
-  }
-
-  return "bg-slate-100 text-valencia-navy";
-}
-
-function getPriorityClass(priority) {
-  const normalized = normalize(priority);
-
-  if (normalized === "high") {
-    return "bg-red-50 text-red-700";
-  }
-
-  if (normalized === "medium") {
-    return "bg-blue-50 text-blue-700";
-  }
-
-  if (normalized === "low") {
-    return "bg-emerald-50 text-emerald-700";
-  }
-
-  return "bg-slate-100 text-valencia-navy";
+  saveProjectAssignmentCache(nextCache);
 }
 
 async function fetchProjects(profile) {
-  if (projectService.getAllProjects) {
+  if (typeof projectService.getAllProjects === "function") {
     return projectService.getAllProjects(profile);
   }
 
-  if (projectService.getProjects) {
+  if (typeof projectService.getProjects === "function") {
     return projectService.getProjects(profile);
   }
 
-  if (projectService.fetchProjects) {
+  if (typeof projectService.fetchProjects === "function") {
     return projectService.fetchProjects(profile);
-  }
-
-  throw new Error("Project fetch function not found.");
-}
-
-async function fetchUsers() {
-  if (userService.getUsers) {
-    return userService.getUsers();
-  }
-
-  if (userService.fetchUsers) {
-    return userService.fetchUsers();
   }
 
   return [];
 }
 
-async function updateProjectRecord(id, payload, profile) {
-  if (projectService.updateProject) {
-    return projectService.updateProject(id, payload, profile);
+async function fetchUsers(profile) {
+  if (typeof userService.getUsers === "function") {
+    return userService.getUsers(profile);
   }
 
-  if (projectService.editProject) {
-    return projectService.editProject(id, payload, profile);
+  if (typeof userService.fetchUsers === "function") {
+    return userService.fetchUsers(profile);
   }
 
-  throw new Error("Project update function not found.");
+  if (typeof userService.getAllUsers === "function") {
+    return userService.getAllUsers(profile);
+  }
+
+  return [];
 }
 
-async function deleteProjectRecord(id, profile) {
-  if (projectService.deleteProject) {
-    return projectService.deleteProject(id, profile);
+async function updateProjectRecord(projectId, payload, profile) {
+  if (typeof projectService.updateProject === "function") {
+    return projectService.updateProject(projectId, payload, profile);
   }
 
-  if (projectService.removeProject) {
-    return projectService.removeProject(id, profile);
+  if (typeof projectService.editProject === "function") {
+    return projectService.editProject(projectId, payload, profile);
   }
 
-  throw new Error("Project delete function not found.");
+  if (typeof projectService.saveProject === "function") {
+    return projectService.saveProject(projectId, payload, profile);
+  }
+
+  if (typeof projectService.updateProjectStatus === "function" && payload?.status) {
+    return projectService.updateProjectStatus(projectId, payload.status, profile);
+  }
+
+  return payload;
+}
+
+async function createProjectRecord(payload, profile) {
+  if (typeof projectService.createProject === "function") {
+    return projectService.createProject(payload, profile);
+  }
+
+  if (typeof projectService.addProject === "function") {
+    return projectService.addProject(payload, profile);
+  }
+
+  if (typeof projectService.saveProject === "function") {
+    return projectService.saveProject(payload, profile);
+  }
+
+  return payload;
+}
+
+function StatBox({ icon: Icon, label, value, tone, active, onClick }) {
+  const toneClass =
+    tone === "blue"
+      ? "bg-blue-50 text-blue-500"
+      : tone === "red"
+      ? "bg-red-50 text-red-500"
+      : tone === "yellow"
+      ? "bg-yellow-50 text-yellow-600"
+      : "bg-orange-50 text-[#FF6B35]";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-xl border bg-white p-5 text-left shadow-[0_12px_30px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:border-[#FF6B35] hover:shadow-[0_16px_35px_rgba(15,23,42,0.09)] ${
+        active ? "border-[#FF6B35]" : "border-slate-200"
+      }`}
+    >
+      <div className="mb-7">
+        <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${toneClass}`}>
+          <Icon size={20} />
+        </div>
+      </div>
+
+      <p className="text-[12px] font-black uppercase tracking-[0.08em] text-[#061638]">
+        {label}
+      </p>
+
+      <p className="mt-3 text-[32px] font-black leading-none text-[#061638]">
+        {value}
+      </p>
+    </button>
+  );
+}
+
+function ProjectModal({
+  mode,
+  open,
+  project,
+  users,
+  onClose,
+  onSave,
+}) {
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [form, setForm] = useState({
+    name: "",
+    description: "",
+    department: "",
+    manager: "",
+    priority: "medium",
+    status: "active",
+    startDate: "",
+    endDate: "",
+    selectedUserIds: [],
+  });
+
+  useEffect(() => {
+    if (!open) return;
+
+    if (project) {
+      const assigned = getProjectAssignedEmployees(project, users);
+
+      setForm({
+        name: getProjectName(project),
+        description: getProjectDescription(project) === "-" ? "" : getProjectDescription(project),
+        department: getProjectDepartment(project),
+        manager: getProjectManager(project) === "-" ? "" : getProjectManager(project),
+        priority: getProjectPriority(project),
+        status: getProjectStatus(project),
+        startDate: getStartDate(project) || "",
+        endDate: getEndDate(project) || "",
+        selectedUserIds: assigned.map((user) => getUserId(user)).filter(Boolean),
+      });
+    } else {
+      setForm({
+        name: "",
+        description: "",
+        department: "",
+        manager: "",
+        priority: "medium",
+        status: "active",
+        startDate: "",
+        endDate: "",
+        selectedUserIds: [],
+      });
+    }
+
+    setEmployeeSearch("");
+  }, [open, project, users]);
+
+  if (!open) return null;
+
+  const filteredUsers = users.filter((user) => {
+    const query = normalize(employeeSearch);
+
+    if (!query) return true;
+
+    return normalize(
+      `${getUserName(user)} ${getUserEmail(user)} ${getUserDepartment(user)} ${getUserRole(user)}`
+    ).includes(query);
+  });
+
+  function updateField(name, value) {
+    setForm((current) => ({
+      ...current,
+      [name]: value,
+    }));
+  }
+
+  function toggleUser(user) {
+    const userId = getUserId(user);
+
+    setForm((current) => {
+      const exists = current.selectedUserIds.includes(userId);
+
+      return {
+        ...current,
+        selectedUserIds: exists
+          ? current.selectedUserIds.filter((id) => id !== userId)
+          : [...current.selectedUserIds, userId],
+      };
+    });
+  }
+
+  function submit(event) {
+    event.preventDefault();
+
+    if (!form.name.trim()) {
+      toast.error("Project name is required.");
+      return;
+    }
+
+    const selectedUsers = users.filter((user) =>
+      form.selectedUserIds.includes(getUserId(user))
+    );
+
+    const payload = {
+      name: form.name.trim(),
+      title: form.name.trim(),
+      projectName: form.name.trim(),
+      description: form.description.trim(),
+      department: form.department.trim(),
+      departmentName: form.department.trim(),
+      division: form.department.trim(),
+      manager: form.manager.trim(),
+      priority: form.priority,
+      status: form.status,
+      startDate: form.startDate,
+      endDate: form.endDate,
+      dueDate: form.endDate,
+      ...makeAssignedPayload(selectedUsers),
+    };
+
+    onSave(payload);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 px-4">
+      <form
+        onSubmit={submit}
+        className="max-h-[92vh] w-full max-w-[900px] overflow-hidden rounded-2xl bg-white shadow-[0_24px_70px_rgba(0,0,0,0.24)]"
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h2 className="text-xl font-black text-[#061638]">
+              {mode === "edit" ? "Edit Project" : "New Project"}
+            </h2>
+            <p className="mt-1 text-sm font-semibold text-slate-500">
+              Add project details and assign employees.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-[#061638] transition hover:bg-red-50 hover:text-red-500"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="max-h-[calc(92vh-150px)] overflow-y-auto p-5">
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="md:col-span-2">
+              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                Project Name
+              </span>
+              <input
+                value={form.name}
+                onChange={(event) => updateField("name", event.target.value)}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+                placeholder="Project name"
+              />
+            </label>
+
+            <label className="md:col-span-2">
+              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                Description
+              </span>
+              <textarea
+                value={form.description}
+                onChange={(event) =>
+                  updateField("description", event.target.value)
+                }
+                rows={3}
+                className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+                placeholder="Description"
+              />
+            </label>
+
+            <label>
+              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                Department
+              </span>
+              <input
+                value={form.department}
+                onChange={(event) =>
+                  updateField("department", event.target.value)
+                }
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+                placeholder="Department"
+              />
+            </label>
+
+            <label>
+              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                Manager
+              </span>
+              <input
+                value={form.manager}
+                onChange={(event) => updateField("manager", event.target.value)}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+                placeholder="Manager"
+              />
+            </label>
+
+            <label>
+              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                Priority
+              </span>
+              <select
+                value={form.priority}
+                onChange={(event) => updateField("priority", event.target.value)}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+              >
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+
+            <label>
+              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                Status
+              </span>
+              <select
+                value={form.status}
+                onChange={(event) => updateField("status", event.target.value)}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+              >
+                <option value="active">Active</option>
+                <option value="on_hold">On Hold</option>
+                <option value="completed">Completed</option>
+                <option value="deleted">Deleted</option>
+              </select>
+            </label>
+
+            <label>
+              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                Start Date
+              </span>
+              <input
+                type="date"
+                value={form.startDate}
+                onChange={(event) => updateField("startDate", event.target.value)}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+              />
+            </label>
+
+            <label>
+              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                End Date
+              </span>
+              <input
+                type="date"
+                value={form.endDate}
+                onChange={(event) => updateField("endDate", event.target.value)}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+              />
+            </label>
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-black text-[#061638]">
+                  Assign Employees
+                </h3>
+                <p className="text-xs font-semibold text-slate-500">
+                  Search and select employees for this project.
+                </p>
+              </div>
+
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-[#FF6B35]">
+                {form.selectedUserIds.length} selected
+              </span>
+            </div>
+
+            <div className="mb-3 flex h-11 items-center gap-3 rounded-xl border border-slate-200 bg-white px-4">
+              <Search size={18} className="text-slate-400" />
+              <input
+                value={employeeSearch}
+                onChange={(event) => setEmployeeSearch(event.target.value)}
+                placeholder="Search employee by name, email, department..."
+                className="h-full min-w-0 flex-1 bg-transparent text-sm font-semibold text-[#061638] outline-none placeholder:text-slate-400"
+              />
+            </div>
+
+            <div className="max-h-[260px] overflow-y-auto rounded-xl border border-slate-200 bg-white">
+              {filteredUsers.length ? (
+                filteredUsers.map((user) => {
+                  const id = getUserId(user);
+                  const checked = form.selectedUserIds.includes(id);
+
+                  return (
+                    <label
+                      key={id}
+                      className={`flex cursor-pointer items-center gap-3 border-b border-slate-100 px-4 py-3 transition last:border-b-0 ${
+                        checked ? "bg-orange-50" : "hover:bg-slate-50"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleUser(user)}
+                        className="h-4 w-4 accent-[#FF6B35]"
+                      />
+
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#FF6B35] text-xs font-black text-white">
+                        {getInitials(getUserName(user))}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-black text-[#061638]">
+                          {getUserName(user)}
+                        </p>
+                        <p className="truncate text-xs font-semibold text-slate-500">
+                          {getUserEmail(user) || getUserDepartment(user)}
+                        </p>
+                      </div>
+
+                      <span className="text-xs font-black text-slate-500">
+                        {getUserDepartment(user)}
+                      </span>
+                    </label>
+                  );
+                })
+              ) : (
+                <div className="px-4 py-8 text-center text-sm font-semibold text-slate-500">
+                  No employees found.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3 border-t border-slate-100 px-5 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-11 rounded-xl border border-slate-200 bg-white px-5 text-sm font-black text-[#061638] transition hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="submit"
+            className="h-11 rounded-xl bg-[#FF6B35] px-6 text-sm font-black text-white transition hover:opacity-90"
+          >
+            Save Project
+          </button>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 export default function Projects() {
@@ -557,64 +1022,30 @@ export default function Projects() {
 
   const [projects, setProjects] = useState([]);
   const [users, setUsers] = useState([]);
-  const [view, setView] = useState("table");
   const [loading, setLoading] = useState(true);
 
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [viewMode, setViewMode] = useState("table");
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState("create");
   const [editingProject, setEditingProject] = useState(null);
-  const [editSaving, setEditSaving] = useState(false);
-  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const [editForm, setEditForm] = useState({
-    name: "",
-    description: "",
-    department: "",
-    manager: "",
-    startDate: "",
-    endDate: "",
-    priority: "medium",
-    status: "active",
-    memberIds: [],
-  });
-
-  const [filters, setFilters] = useState({
-    search: "",
-    status: "all",
-  });
-
-  const employeeUsers = useMemo(() => {
-    return users.filter(isEmployeeUser);
-  }, [users]);
-
-  const filteredEmployeeUsers = useMemo(() => {
-    const query = normalize(employeeSearch);
-
-    if (!query) return employeeUsers;
-
-    return employeeUsers.filter((user) => {
-      const searchable = normalize(
-        `${getUserName(user)} ${user.email || ""} ${getUserRole(
-          user
-        )} ${getUserDepartment(user)}`
-      );
-
-      return searchable.includes(query);
-    });
-  }, [employeeUsers, employeeSearch]);
-
-  const loadProjects = async () => {
+  async function loadData() {
     setLoading(true);
 
     try {
-      const [projectData, userData] = await Promise.all([
+      const [projectResponse, userResponse] = await Promise.all([
         fetchProjects(profile),
-        fetchUsers(),
+        fetchUsers(profile),
       ]);
 
-      const projectList = extractArray(projectData);
-      const userList = extractArray(userData);
-
-      setProjects(projectList);
-      setUsers(userList);
+      const nextProjects = extractArray(projectResponse);
+setProjects(nextProjects);
+syncProjectAssignmentCache(nextProjects);
+      setUsers(extractArray(userResponse).filter(isEmployeeLike));
     } catch (error) {
       console.error("Projects load error:", error);
       toast.error(error?.message || "Failed to load projects.");
@@ -623,616 +1054,340 @@ export default function Projects() {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   useEffect(() => {
-    loadProjects();
+    loadData();
   }, [profile]);
 
   const stats = useMemo(() => {
+    const active = projects.filter(
+      (project) => getProjectStatus(project) === "active"
+    ).length;
+
+    const onHold = projects.filter(
+      (project) => getProjectStatus(project) === "on_hold"
+    ).length;
+
+    const deleted = projects.filter(
+      (project) => getProjectStatus(project) === "deleted"
+    ).length;
+
     return {
-      active: projects.filter(
-        (project) => normalizeStatus(project?.status) === "active"
-      ).length,
-      onHold: projects.filter(
-        (project) => normalizeStatus(project?.status) === "on_hold"
-      ).length,
-      aborted: projects.filter(
-        (project) => normalizeStatus(project?.status) === "aborted"
-      ).length,
+      active,
+      onHold,
+      deleted,
     };
   }, [projects]);
 
-  const filteredProjects = useMemo(() => {
-    const query = normalize(filters.search);
-    const selectedStatus = filters.status;
+  const visibleProjects = useMemo(() => {
+    const query = normalize(search);
 
-    return projects.filter((project) => {
-      const status = normalizeStatus(project?.status);
+    return projects.filter((project, index) => {
+      const status = getProjectStatus(project);
+
+      const notDeletedByDefault =
+        statusFilter === "deleted" || status !== "deleted";
+
+      const matchesStatus =
+        statusFilter === "all" ||
+        status === statusFilter ||
+        (statusFilter === "active" && status === "active") ||
+        (statusFilter === "on_hold" && status === "on_hold") ||
+        (statusFilter === "deleted" && status === "deleted");
 
       const searchable = normalize(
-        `${getProjectName(project)} ${getProjectDescription(
+        `${getProjectName(project, index)} ${getProjectDescription(
           project
-        )} ${getProjectDepartment(project)} ${getProjectManager(project)} ${
-          project?.status || ""
-        } ${getProjectPriority(project)}`
+        )} ${getProjectDepartment(project)} ${getProjectManager(project)} ${getProjectPriority(
+          project
+        )}`
       );
 
       const matchesSearch = !query || searchable.includes(query);
-      const matchesStatus =
-        selectedStatus === "all" || status === selectedStatus;
 
-      return matchesSearch && matchesStatus;
+      return notDeletedByDefault && matchesStatus && matchesSearch;
     });
-  }, [projects, filters]);
+  }, [projects, search, statusFilter]);
 
-  const updateFilter = (name, value) => {
-    setFilters((current) => ({
-      ...current,
-      [name]: value,
-    }));
-  };
-
-  const openProject = (project) => {
-    const id = getProjectId(project);
-
-    if (!id) {
-      toast.error("Project ID not found.");
-      return;
-    }
-
-    navigate(`/admin/projects/${id}`);
-  };
-
-  const openEditModal = (project) => {
-    const members = getProjectMembers(project, users);
-    const memberIds = members.map((member) =>
-      String(member.id || member.email || member.name)
-    );
-
-    setEmployeeSearch("");
-    setEditingProject(project);
-
-    setEditForm({
-      name: getProjectName(project),
-      description:
-        getProjectDescription(project) === "-"
-          ? ""
-          : getProjectDescription(project),
-      department:
-        getProjectDepartment(project) === "-"
-          ? ""
-          : getProjectDepartment(project),
-      manager:
-        getProjectManager(project) === "-" ? "" : getProjectManager(project),
-      startDate: toInputDate(getProjectStartDate(project)),
-      endDate: toInputDate(getProjectEndDate(project)),
-      priority: normalize(getProjectPriority(project)) || "medium",
-      status: normalizeStatus(project?.status),
-      memberIds,
-    });
-  };
-
-  const closeEditModal = () => {
-    if (editSaving) return;
+  function openCreateModal() {
+    setModalMode("create");
     setEditingProject(null);
-  };
+    setModalOpen(true);
+  }
 
-  const updateEditForm = (name, value) => {
-    setEditForm((current) => ({
-      ...current,
-      [name]: value,
-    }));
-  };
+  function openEditModal(project) {
+    setModalMode("edit");
+    setEditingProject(project);
+    setModalOpen(true);
+  }
 
-  const toggleMember = (userId) => {
-    setEditForm((current) => {
-      const exists = current.memberIds.includes(userId);
+async function saveProject(payload) {
+  setSaving(true);
 
-      return {
-        ...current,
-        memberIds: exists
-          ? current.memberIds.filter((id) => id !== userId)
-          : [...current.memberIds, userId],
-      };
-    });
-  };
+  try {
+    if (modalMode === "edit" && editingProject) {
+      const projectIndex = projects.findIndex((item) => item === editingProject);
+      const projectId = getProjectId(editingProject, projectIndex);
 
-  const saveEditedProject = async (event) => {
-    event.preventDefault();
+      const response = await updateProjectRecord(projectId, payload, profile);
 
-    if (!editingProject) return;
+      const finalProject =
+        response && typeof response === "object"
+          ? {
+              ...editingProject,
+              ...response,
+              ...payload,
+            }
+          : {
+              ...editingProject,
+              ...payload,
+            };
 
-    const id = getProjectId(editingProject);
+      setProjects((current) =>
+        current.map((project, index) => {
+          const currentId = getProjectId(project, index);
 
-    if (!id) {
-      toast.error("Project ID not found.");
-      return;
-    }
+          if (currentId === projectId || project === editingProject) {
+            return finalProject;
+          }
 
-    if (!editForm.name.trim()) {
-      toast.error("Project name is required.");
-      return;
-    }
+          return project;
+        })
+      );
 
-    setEditSaving(true);
-
-    try {
-      const selectedMembers = employeeUsers
-        .filter((user) => editForm.memberIds.includes(getUserId(user)))
-        .map((user) => ({
-          id: getUserId(user),
-          name: getUserName(user),
-          email: user.email || "",
-          role: getUserRole(user),
-          department: getUserDepartment(user),
-        }));
-
-      const selectedMemberIds = selectedMembers.map((member) => member.id);
-
-      const payload = {
-        ...editingProject,
-        name: editForm.name.trim(),
-        title: editForm.name.trim(),
-        projectName: editForm.name.trim(),
-        description: editForm.description.trim(),
-        department: editForm.department.trim(),
-        departmentName: editForm.department.trim(),
-        division: editForm.department.trim(),
-        manager: editForm.manager.trim(),
-        managerName: editForm.manager.trim(),
-        startDate: editForm.startDate,
-        endDate: editForm.endDate,
-        priority: editForm.priority,
-        status: editForm.status,
-
-        members: selectedMembers,
-        assignedMembers: selectedMembers,
-        assigned_members: selectedMembers,
-        assignedUsers: selectedMembers,
-        assigned_users: selectedMembers,
-        assignedEmployees: selectedMembers,
-        assigned_employees: selectedMembers,
-        employees: selectedMembers,
-        users: selectedMembers,
-        teamMembers: selectedMembers,
-        team_members: selectedMembers,
-        employeeIds: selectedMemberIds,
-        employee_ids: selectedMemberIds,
-      };
-
-      await updateProjectRecord(id, payload, profile);
+      upsertProjectAssignmentCache(finalProject, projectIndex);
 
       toast.success("Project updated.");
-      setEditingProject(null);
-      await loadProjects();
-    } catch (error) {
-      toast.error(error?.message || "Failed to update project.");
-    } finally {
-      setEditSaving(false);
-    }
-  };
+    } else {
+      const newProject = {
+        id: `project-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+        ...payload,
+      };
 
-  const togglePauseProject = async (project) => {
-    const id = getProjectId(project);
-    const status = normalizeStatus(project?.status);
-    const nextStatus = status === "on_hold" ? "active" : "on_hold";
+      const response = await createProjectRecord(newProject, profile);
 
-    if (!id) {
-      toast.error("Project ID not found.");
-      return;
+      const finalProject =
+        response && typeof response === "object"
+          ? {
+              ...newProject,
+              ...response,
+              ...payload,
+            }
+          : newProject;
+
+      setProjects((current) => [...current, finalProject]);
+
+      upsertProjectAssignmentCache(finalProject, projects.length);
+
+      toast.success("Project created.");
     }
+
+    setModalOpen(false);
+    setEditingProject(null);
+  } catch (error) {
+    console.error("Project save error:", error);
+    toast.error(error?.message || "Failed to save project.");
+  } finally {
+    setSaving(false);
+  }
+}
+
+  async function updateProjectStatus(project, nextStatus) {
+    const projectIndex = projects.findIndex((item) => item === project);
+    const projectId = getProjectId(project, projectIndex);
+
+    const payload = {
+      status: nextStatus,
+      deletedAt: nextStatus === "deleted" ? new Date().toISOString() : project?.deletedAt || "",
+    };
 
     try {
-      await updateProjectRecord(id, { ...project, status: nextStatus }, profile);
-      toast.success(
-        nextStatus === "on_hold" ? "Project paused." : "Project resumed."
+      await updateProjectRecord(projectId, payload, profile);
+
+      setProjects((current) =>
+        current.map((item, index) => {
+          const currentId = getProjectId(item, index);
+
+          if (currentId === projectId || item === project) {
+            return {
+              ...item,
+              ...payload,
+            };
+          }
+
+          return item;
+        })
       );
-      await loadProjects();
+
+      if (nextStatus === "deleted") {
+        toast.success("Project moved to deleted projects.");
+      } else if (nextStatus === "on_hold") {
+        toast.success("Project put on hold.");
+      } else {
+        toast.success("Project restored.");
+      }
     } catch (error) {
       toast.error(error?.message || "Failed to update project.");
     }
-  };
+  }
 
-  const abortProject = async (project) => {
-    const id = getProjectId(project);
+  function handleRowClick(project, index) {
+    const status = getProjectStatus(project);
 
-    if (!id) {
-      toast.error("Project ID not found.");
-      return;
-    }
+    if (status === "deleted") return;
 
-    if (!window.confirm(`Abort ${getProjectName(project)}?`)) return;
-
-    try {
-      await updateProjectRecord(id, { ...project, status: "aborted" }, profile);
-      toast.success("Project aborted.");
-      await loadProjects();
-    } catch (error) {
-      toast.error(error?.message || "Failed to abort project.");
-    }
-  };
-
-  const deleteProject = async (project) => {
-    const id = getProjectId(project);
-
-    if (!id) {
-      toast.error("Project ID not found.");
-      return;
-    }
-
-    if (!window.confirm(`Delete ${getProjectName(project)}?`)) return;
-
-    try {
-      await deleteProjectRecord(id, profile);
-      toast.success("Project deleted.");
-      await loadProjects();
-    } catch (error) {
-      toast.error(error?.message || "Failed to delete project.");
-    }
-  };
+    navigate(`/admin/projects/${getProjectId(project, index)}`);
+  }
 
   return (
     <main className="page-shell">
       <div className="mobile-frame space-y-5">
         <section className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-3xl font-black sm:text-4xl">Projects</h1>
+            <h1 className="text-3xl font-black text-[#061638] sm:text-4xl">
+              Projects
+            </h1>
 
-            <p className="muted mt-1">
+            <p className="mt-1 text-sm font-semibold text-slate-500">
               Create, assign, and manage Valencia Nutrition project portfolios.
             </p>
           </div>
 
-          <Button
-            icon={Plus}
-            onClick={() => toast("Create project page is not connected yet.")}
+          <button
+            type="button"
+            onClick={openCreateModal}
+            className="flex h-11 items-center justify-center gap-2 rounded-xl bg-[#FF6B35] px-5 text-sm font-black text-white shadow-[0_10px_24px_rgba(255,107,53,0.25)] transition hover:opacity-90"
           >
+            <Plus size={18} />
             New Project
-          </Button>
+          </button>
         </section>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <StatCard label="Active Projects" value={stats.active} />
-          <StatCard label="On Hold" value={stats.onHold} tone="blue" />
-          <StatCard label="Aborted" value={stats.aborted} tone="red" />
-        </div>
+        <section className="grid gap-4 md:grid-cols-3">
+          <StatBox
+            icon={Briefcase}
+            label="Active Projects"
+            value={stats.active}
+            tone="orange"
+            active={statusFilter === "active"}
+            onClick={() => setStatusFilter("active")}
+          />
 
-        <section className="card p-4">
-          <div className="grid gap-3 xl:grid-cols-[1fr_190px_auto]">
-            <Input
-              icon={Search}
-              value={filters.search}
-              onChange={(event) => updateFilter("search", event.target.value)}
-              placeholder="Search by project name, description, department..."
-            />
+          <StatBox
+            icon={Clock3}
+            label="On Hold"
+            value={stats.onHold}
+            tone="blue"
+            active={statusFilter === "on_hold"}
+            onClick={() => setStatusFilter("on_hold")}
+          />
+
+          <StatBox
+            icon={Trash2}
+            label="Deleted Projects"
+            value={stats.deleted}
+            tone="red"
+            active={statusFilter === "deleted"}
+            onClick={() => setStatusFilter("deleted")}
+          />
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
+          <div className="grid gap-3 lg:grid-cols-[1fr_190px_210px]">
+            <div className="flex h-11 items-center gap-3 rounded-xl border border-slate-200 bg-white px-4">
+              <Search size={19} className="text-slate-400" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search by project name, description, department..."
+                className="h-full w-full bg-transparent text-sm font-semibold text-[#061638] outline-none placeholder:text-slate-400"
+              />
+            </div>
 
             <select
-              value={filters.status}
-              onChange={(event) => updateFilter("status", event.target.value)}
-              className="h-11 rounded-md border border-valencia-line bg-white px-3 text-sm font-semibold text-valencia-navy"
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="h-11 rounded-xl border border-slate-200 bg-white px-4 text-sm font-black text-[#061638] outline-none"
             >
               <option value="all">All Statuses</option>
               <option value="active">Active</option>
               <option value="on_hold">On Hold</option>
-              <option value="aborted">Cancelled</option>
               <option value="completed">Completed</option>
+              <option value="deleted">Deleted</option>
             </select>
 
-            <div className="flex rounded-md border border-valencia-line bg-white p-1">
+            <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-slate-200 bg-white p-1">
               <button
                 type="button"
-                onClick={() => setView("table")}
-                className={`flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm font-black transition ${
-                  view === "table"
-                    ? "bg-valencia-orange text-white"
-                    : "text-valencia-navy hover:bg-slate-50"
+                onClick={() => setViewMode("table")}
+                className={`flex h-9 items-center justify-center gap-2 rounded-lg text-sm font-black transition ${
+                  viewMode === "table"
+                    ? "bg-[#FF6B35] text-white"
+                    : "text-[#061638] hover:bg-orange-50"
                 }`}
               >
-                <Table2 size={17} />
+                <Table2 size={16} />
                 Table
               </button>
 
               <button
                 type="button"
-                onClick={() => setView("grid")}
-                className={`flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm font-black transition ${
-                  view === "grid"
-                    ? "bg-valencia-orange text-white"
-                    : "text-valencia-navy hover:bg-slate-50"
+                onClick={() => setViewMode("grid")}
+                className={`flex h-9 items-center justify-center gap-2 rounded-lg text-sm font-black transition ${
+                  viewMode === "grid"
+                    ? "bg-[#FF6B35] text-white"
+                    : "text-[#061638] hover:bg-orange-50"
                 }`}
               >
-                <Grid2X2 size={17} />
+                <Grid2X2 size={16} />
                 Grid
               </button>
             </div>
           </div>
         </section>
 
-        {view === "table" ? (
+        {loading ? (
+          <section className="rounded-xl border border-slate-200 bg-white px-5 py-8 text-sm font-semibold text-slate-500">
+            Loading projects...
+          </section>
+        ) : viewMode === "table" ? (
           <ProjectTable
-            projects={filteredProjects}
+            projects={visibleProjects}
             users={users}
-            onOpen={openProject}
+            onRowClick={handleRowClick}
             onEdit={openEditModal}
-            onPause={togglePauseProject}
-            onAbort={abortProject}
-            onDelete={deleteProject}
+            onPause={(project) => updateProjectStatus(project, "on_hold")}
+            onRestore={(project) => updateProjectStatus(project, "active")}
+            onDelete={(project) => updateProjectStatus(project, "deleted")}
           />
         ) : (
           <ProjectGrid
-            projects={filteredProjects}
+            projects={visibleProjects}
             users={users}
-            onOpen={openProject}
+            onCardClick={handleRowClick}
             onEdit={openEditModal}
-            onPause={togglePauseProject}
-            onAbort={abortProject}
-            onDelete={deleteProject}
+            onPause={(project) => updateProjectStatus(project, "on_hold")}
+            onRestore={(project) => updateProjectStatus(project, "active")}
+            onDelete={(project) => updateProjectStatus(project, "deleted")}
           />
         )}
-
-        {loading ? (
-          <div className="fixed bottom-5 right-5 rounded-full bg-valencia-navy px-4 py-2 text-sm font-black text-white shadow-lift">
-            Loading projects...
-          </div>
-        ) : null}
       </div>
 
-      {editingProject ? (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 px-4">
-          <form
-            onSubmit={saveEditedProject}
-            className="max-h-[92vh] w-full max-w-[860px] overflow-y-auto rounded-2xl bg-white p-6 shadow-[0_24px_70px_rgba(0,0,0,0.22)]"
-          >
-            <div className="mb-5 flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-black text-valencia-navy">
-                  Edit Project
-                </h2>
-                <p className="mt-1 text-sm font-semibold text-valencia-muted">
-                  Update project details and assign employees.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={closeEditModal}
-                className="flex h-10 w-10 items-center justify-center rounded-xl border border-valencia-line bg-white text-valencia-navy transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-              >
-                <XCircle size={19} />
-              </button>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="md:col-span-2">
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-valencia-muted">
-                  Project Name
-                </span>
-                <input
-                  value={editForm.name}
-                  onChange={(event) =>
-                    updateEditForm("name", event.target.value)
-                  }
-                  className="h-11 w-full rounded-xl border border-valencia-line bg-white px-4 text-sm font-bold text-valencia-navy outline-none focus:border-valencia-orange"
-                  placeholder="Project name"
-                />
-              </label>
-
-              <label className="md:col-span-2">
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-valencia-muted">
-                  Description
-                </span>
-                <textarea
-                  value={editForm.description}
-                  onChange={(event) =>
-                    updateEditForm("description", event.target.value)
-                  }
-                  className="min-h-[90px] w-full rounded-xl border border-valencia-line bg-white px-4 py-3 text-sm font-bold text-valencia-navy outline-none focus:border-valencia-orange"
-                  placeholder="Project description"
-                />
-              </label>
-
-              <label>
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-valencia-muted">
-                  Department
-                </span>
-                <input
-                  value={editForm.department}
-                  onChange={(event) =>
-                    updateEditForm("department", event.target.value)
-                  }
-                  className="h-11 w-full rounded-xl border border-valencia-line bg-white px-4 text-sm font-bold text-valencia-navy outline-none focus:border-valencia-orange"
-                  placeholder="Department"
-                />
-              </label>
-
-              <label>
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-valencia-muted">
-                  Manager
-                </span>
-                <input
-                  value={editForm.manager}
-                  onChange={(event) =>
-                    updateEditForm("manager", event.target.value)
-                  }
-                  className="h-11 w-full rounded-xl border border-valencia-line bg-white px-4 text-sm font-bold text-valencia-navy outline-none focus:border-valencia-orange"
-                  placeholder="Manager"
-                />
-              </label>
-
-              <label>
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-valencia-muted">
-                  Start Date
-                </span>
-                <input
-                  type="date"
-                  value={editForm.startDate}
-                  onChange={(event) =>
-                    updateEditForm("startDate", event.target.value)
-                  }
-                  className="h-11 w-full rounded-xl border border-valencia-line bg-white px-4 text-sm font-bold text-valencia-navy outline-none focus:border-valencia-orange"
-                />
-              </label>
-
-              <label>
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-valencia-muted">
-                  End Date
-                </span>
-                <input
-                  type="date"
-                  value={editForm.endDate}
-                  onChange={(event) =>
-                    updateEditForm("endDate", event.target.value)
-                  }
-                  className="h-11 w-full rounded-xl border border-valencia-line bg-white px-4 text-sm font-bold text-valencia-navy outline-none focus:border-valencia-orange"
-                />
-              </label>
-
-              <label>
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-valencia-muted">
-                  Priority
-                </span>
-                <select
-                  value={editForm.priority}
-                  onChange={(event) =>
-                    updateEditForm("priority", event.target.value)
-                  }
-                  className="h-11 w-full rounded-xl border border-valencia-line bg-white px-4 text-sm font-bold text-valencia-navy outline-none focus:border-valencia-orange"
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
-              </label>
-
-              <label>
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-valencia-muted">
-                  Status
-                </span>
-                <select
-                  value={editForm.status}
-                  onChange={(event) =>
-                    updateEditForm("status", event.target.value)
-                  }
-                  className="h-11 w-full rounded-xl border border-valencia-line bg-white px-4 text-sm font-bold text-valencia-navy outline-none focus:border-valencia-orange"
-                >
-                  <option value="active">Active</option>
-                  <option value="on_hold">On Hold</option>
-                  <option value="aborted">Cancelled</option>
-                  <option value="completed">Completed</option>
-                </select>
-              </label>
-
-              <div className="md:col-span-2">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <span className="block text-xs font-black uppercase tracking-[0.12em] text-valencia-muted">
-                    Assign Employees
-                  </span>
-
-                  <span className="text-xs font-black text-valencia-orange">
-                    Selected: {editForm.memberIds.length}
-                  </span>
-                </div>
-
-                <div className="rounded-xl border border-valencia-line bg-white">
-                  <div className="border-b border-valencia-line p-3">
-                    <div className="flex h-11 items-center gap-3 rounded-xl border border-valencia-line bg-white px-4">
-                      <Search
-                        size={17}
-                        className="shrink-0 text-valencia-muted"
-                      />
-
-                      <input
-                        value={employeeSearch}
-                        onChange={(event) =>
-                          setEmployeeSearch(event.target.value)
-                        }
-                        placeholder="Search employee by name, email, role, or department..."
-                        className="h-full min-w-0 flex-1 bg-transparent text-sm font-bold text-valencia-navy outline-none placeholder:text-valencia-muted"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="max-h-[250px] overflow-y-auto p-3">
-                    {filteredEmployeeUsers.length ? (
-                      <div className="grid gap-2 md:grid-cols-2">
-                        {filteredEmployeeUsers.map((user) => {
-                          const id = getUserId(user);
-                          const checked = editForm.memberIds.includes(id);
-
-                          return (
-                            <button
-                              key={id}
-                              type="button"
-                              onClick={() => toggleMember(id)}
-                              className={`flex items-center gap-3 rounded-xl border px-3 py-3 text-left transition ${
-                                checked
-                                  ? "border-valencia-orange bg-orange-50"
-                                  : "border-slate-100 bg-white hover:border-orange-200 hover:bg-orange-50/50"
-                              }`}
-                            >
-                              <span
-                                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border text-xs font-black ${
-                                  checked
-                                    ? "border-valencia-orange bg-valencia-orange text-white"
-                                    : "border-slate-300 bg-white text-white"
-                                }`}
-                              >
-                                ✓
-                              </span>
-
-                              <div className="min-w-0">
-                                <p className="truncate text-sm font-black text-valencia-navy">
-                                  {getUserName(user)}
-                                </p>
-                                <p className="truncate text-xs font-semibold text-valencia-muted">
-                                  {getUserRole(user)} • {getUserDepartment(user)}
-                                </p>
-                                {user.email ? (
-                                  <p className="truncate text-xs font-semibold text-slate-400">
-                                    {user.email}
-                                  </p>
-                                ) : null}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="py-8 text-center text-sm font-semibold text-valencia-muted">
-                        No employees found.
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <p className="mt-2 text-xs font-semibold text-valencia-muted">
-                  Search and select employees to assign them to this project.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={closeEditModal}
-                disabled={editSaving}
-                className="h-11 rounded-xl border border-valencia-line bg-white px-5 text-sm font-black text-valencia-navy transition hover:bg-slate-50 disabled:opacity-60"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="submit"
-                disabled={editSaving}
-                className="h-11 rounded-xl bg-valencia-orange px-6 text-sm font-black text-white transition hover:opacity-90 disabled:opacity-60"
-              >
-                {editSaving ? "Saving..." : "Save Changes"}
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
+      <ProjectModal
+        mode={modalMode}
+        open={modalOpen}
+        project={editingProject}
+        users={users}
+        onClose={() => {
+          if (!saving) {
+            setModalOpen(false);
+            setEditingProject(null);
+          }
+        }}
+        onSave={saveProject}
+      />
     </main>
   );
 }
@@ -1240,18 +1395,26 @@ export default function Projects() {
 function ProjectTable({
   projects,
   users,
-  onOpen,
+  onRowClick,
   onEdit,
   onPause,
-  onAbort,
+  onRestore,
   onDelete,
 }) {
+  if (!projects.length) {
+    return (
+      <section className="rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm font-semibold text-slate-500">
+        No projects found.
+      </section>
+    );
+  }
+
   return (
-    <section className="card overflow-hidden">
+    <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1320px] text-left text-sm">
+        <table className="w-full min-w-[1160px] text-left text-sm">
           <thead>
-            <tr className="border-b border-valencia-line bg-slate-50 text-xs uppercase tracking-[0.1em] text-valencia-muted">
+            <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.14em] text-slate-500">
               <th className="px-4 py-4">Project</th>
               <th className="px-4 py-4">Department</th>
               <th className="px-4 py-4">Manager</th>
@@ -1259,89 +1422,152 @@ function ProjectTable({
               <th className="px-4 py-4">Members</th>
               <th className="px-4 py-4">Progress</th>
               <th className="px-4 py-4">Status</th>
-              <th className="w-[390px] px-4 py-4">Actions</th>
+              <th className="px-4 py-4">Actions</th>
             </tr>
           </thead>
 
           <tbody>
             {projects.map((project, index) => {
-              const id = getProjectId(project) || `project-${index}`;
-              const status = normalizeStatus(project?.status);
-              const members = getProjectMembers(project, users);
+              const status = getProjectStatus(project);
               const progress = getProjectProgress(project);
+              const memberCount = getProjectMemberCount(project, users);
+              const isDeleted = status === "deleted";
 
               return (
                 <tr
-                  key={id}
-                  onClick={() => onOpen(project)}
-                  className="cursor-pointer border-b border-valencia-line transition hover:bg-orange-50/60"
+                  key={getProjectId(project, index)}
+                  onClick={() => onRowClick(project, index)}
+                  className={`border-b border-slate-100 transition last:border-b-0 ${
+                    isDeleted
+                      ? "bg-red-50/30"
+                      : "cursor-pointer bg-white hover:bg-orange-50/50"
+                  }`}
                 >
-                  <td className="px-4 py-4 align-middle">
-                    <div className="text-left">
-                      <p className="font-black text-valencia-navy">
-                        {getProjectName(project)}
+                  <td className="px-4 py-5 align-middle">
+                    <div className="max-w-[190px]">
+                      <p className="font-black leading-5 text-[#061638]">
+                        {getProjectName(project, index)}
                       </p>
-
-                      <p className="mt-1 max-w-xs truncate text-xs font-semibold text-valencia-muted">
+                      <p className="mt-1 truncate text-xs font-semibold text-slate-500">
                         {getProjectDescription(project)}
                       </p>
                     </div>
                   </td>
 
-                  <td className="px-4 py-4 align-middle font-semibold text-valencia-muted">
+                  <td className="px-4 py-5 align-middle font-semibold text-slate-600">
                     {getProjectDepartment(project)}
                   </td>
 
-                  <td className="px-4 py-4 align-middle font-semibold text-valencia-muted">
+                  <td className="px-4 py-5 align-middle font-semibold text-slate-600">
                     {getProjectManager(project)}
                   </td>
 
-                  <td className="px-4 py-4 align-middle font-semibold text-valencia-muted">
-                    {formatDate(getProjectStartDate(project))} to{" "}
-                    {formatDate(getProjectEndDate(project))}
+                  <td className="px-4 py-5 align-middle font-semibold leading-5 text-slate-600">
+                    {getTimeline(project)}
                   </td>
 
-                  <td className="px-4 py-4 align-middle font-black text-valencia-navy">
-                    {members.length} assigned
+                  <td className="px-4 py-5 align-middle">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onEdit(project);
+                      }}
+                      className="text-left font-black text-[#061638] hover:text-[#FF6B35]"
+                    >
+                      <span className="block">{memberCount}</span>
+                      <span className="block">assigned</span>
+                    </button>
                   </td>
 
-                  <td className="min-w-[160px] px-4 py-4 align-middle">
-                    <ProjectProgress value={progress} />
+                  <td className="px-4 py-5 align-middle">
+                    <div className="flex items-center gap-3">
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                          Progress
+                        </p>
+                        <div className="mt-2 h-2 w-28 overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className="h-full rounded-full bg-[#FF6B35]"
+                            style={{ width: `${progress}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <span className="font-black text-[#061638]">{progress}%</span>
+                    </div>
                   </td>
 
-                  <td className="px-4 py-4 align-middle">
+                  <td className="px-4 py-5 align-middle">
                     <span
-                      className={`rounded-full px-3 py-1 text-xs font-black uppercase ${getStatusClass(
+                      className={`rounded-full px-4 py-2 text-xs font-black ${getStatusClass(
                         status
                       )}`}
                     >
-                      {formatStatus(status)}
+                      {getStatusLabel(status)}
                     </span>
                   </td>
 
-                  <td
-                    className="w-[390px] px-4 py-4 align-middle"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <ProjectActions
-                      project={project}
-                      onEdit={onEdit}
-                      onPause={onPause}
-                      onAbort={onAbort}
-                      onDelete={onDelete}
-                    />
+                  <td className="px-4 py-5 align-middle">
+                    <div className="flex items-center gap-2 whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onEdit(project);
+                        }}
+                        className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-[#061638] transition hover:border-[#FF6B35] hover:text-[#FF6B35]"
+                      >
+                        <Pencil size={15} />
+                        Edit
+                      </button>
+
+                      {isDeleted ? (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onRestore(project);
+                          }}
+                          className="flex h-9 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-black text-emerald-700 transition hover:bg-emerald-100"
+                        >
+                          <CheckCircle2 size={15} />
+                          Restore
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onPause(project);
+                            }}
+                            className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-[#061638] transition hover:border-yellow-300 hover:text-yellow-700"
+                          >
+                            <Clock3 size={15} />
+                            Pause
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onDelete(project);
+                            }}
+                            className="flex h-9 items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 text-xs font-black text-red-600 transition hover:bg-red-100"
+                          >
+                            <Trash2 size={15} />
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
-
-        {!projects.length ? (
-          <div className="p-8 text-center text-valencia-muted">
-            No projects found.
-          </div>
-        ) : null}
       </div>
     </section>
   );
@@ -1350,210 +1576,155 @@ function ProjectTable({
 function ProjectGrid({
   projects,
   users,
-  onOpen,
+  onCardClick,
   onEdit,
   onPause,
-  onAbort,
+  onRestore,
   onDelete,
 }) {
+  if (!projects.length) {
+    return (
+      <section className="rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm font-semibold text-slate-500">
+        No projects found.
+      </section>
+    );
+  }
+
   return (
-    <section>
-      <div className="grid gap-4 lg:grid-cols-2">
-        {projects.map((project, index) => {
-          const id = getProjectId(project) || `project-${index}`;
-          const status = normalizeStatus(project?.status);
-          const priority = getProjectPriority(project);
-          const members = getProjectMembers(project, users);
-          const progress = getProjectProgress(project);
+    <section className="grid gap-4 xl:grid-cols-2">
+      {projects.map((project, index) => {
+        const status = getProjectStatus(project);
+        const progress = getProjectProgress(project);
+        const memberCount = getProjectMemberCount(project, users);
+        const isDeleted = status === "deleted";
 
-          return (
-            <article
-              key={id}
-              onClick={() => onOpen(project)}
-              className="card cursor-pointer p-5 transition hover:border-valencia-orange hover:shadow-card"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-black uppercase ${getStatusClass(
-                    status
-                  )}`}
-                >
-                  {formatStatus(status)}
-                </span>
+        return (
+          <article
+            key={getProjectId(project, index)}
+            onClick={() => onCardClick(project, index)}
+            className={`rounded-xl border bg-white p-5 shadow-[0_12px_30px_rgba(15,23,42,0.06)] transition ${
+              isDeleted
+                ? "border-red-100 bg-red-50/30"
+                : "cursor-pointer border-slate-200 hover:-translate-y-0.5 hover:border-[#FF6B35]"
+            }`}
+          >
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-black ${getStatusClass(
+                      status
+                    )}`}
+                  >
+                    {getStatusLabel(status)}
+                  </span>
 
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-black uppercase ${getPriorityClass(
-                    priority
-                  )}`}
-                >
-                  {formatPriority(priority)}
-                </span>
-              </div>
+                  <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black uppercase text-blue-600">
+                    {getProjectPriority(project)}
+                  </span>
+                </div>
 
-              <div className="mt-4 block w-full text-left">
-                <h2 className="text-2xl font-black text-valencia-navy">
-                  {getProjectName(project)}
-                </h2>
+                <h3 className="text-2xl font-black leading-tight text-[#061638]">
+                  {getProjectName(project, index)}
+                </h3>
 
-                <p className="muted mt-2 line-clamp-2 text-sm">
+                <p className="mt-2 text-sm font-semibold text-slate-500">
                   {getProjectDescription(project)}
                 </p>
               </div>
+            </div>
 
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <InfoBox
-                  label="Department"
-                  value={getProjectDepartment(project)}
-                  icon={BriefcaseBusiness}
-                />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <InfoBlock icon={Briefcase} label="Department" value={getProjectDepartment(project)} />
+              <InfoBlock icon={UsersRound} label="Manager" value={getProjectManager(project)} />
+              <InfoBlock icon={CalendarDays} label="Timeline" value={getTimeline(project)} />
+              <InfoBlock icon={UserPlus} label="Members" value={`${memberCount} assigned`} />
+            </div>
 
-                <InfoBox
-                  label="Manager"
-                  value={getProjectManager(project)}
-                  icon={Users}
-                />
-
-                <InfoBox
-                  label="Timeline"
-                  value={`${formatDate(getProjectStartDate(project))} to ${formatDate(
-                    getProjectEndDate(project)
-                  )}`}
-                  icon={CalendarDays}
-                />
-
-                <InfoBox
-                  label="Members"
-                  value={`${members.length} assigned`}
-                  icon={Users}
-                />
+            <div className="mt-5">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+                  Progress
+                </span>
+                <span className="text-sm font-black text-[#061638]">{progress}%</span>
               </div>
 
-              <ProjectProgress value={progress} large />
+              <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className="h-full rounded-full bg-[#FF6B35]"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </div>
 
-              <div
-                className="mt-5 overflow-x-auto pb-1"
-                onClick={(event) => event.stopPropagation()}
+            <div className="mt-5 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEdit(project);
+                }}
+                className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-[#061638] transition hover:border-[#FF6B35] hover:text-[#FF6B35]"
               >
-                <ProjectActions
-                  project={project}
-                  onEdit={onEdit}
-                  onPause={onPause}
-                  onAbort={onAbort}
-                  onDelete={onDelete}
-                />
-              </div>
-            </article>
-          );
-        })}
-      </div>
+                <Pencil size={15} />
+                Edit
+              </button>
 
-      {!projects.length ? (
-        <div className="card p-8 text-center text-valencia-muted">
-          No projects found.
-        </div>
-      ) : null}
+              {isDeleted ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRestore(project);
+                  }}
+                  className="flex h-9 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-black text-emerald-700 transition hover:bg-emerald-100"
+                >
+                  <CheckCircle2 size={15} />
+                  Restore
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onPause(project);
+                    }}
+                    className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-[#061638] transition hover:border-yellow-300 hover:text-yellow-700"
+                  >
+                    <Clock3 size={15} />
+                    Pause
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onDelete(project);
+                    }}
+                    className="flex h-9 items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 text-xs font-black text-red-600 transition hover:bg-red-100"
+                  >
+                    <Trash2 size={15} />
+                    Delete
+                  </button>
+                </>
+              )}
+            </div>
+          </article>
+        );
+      })}
     </section>
   );
 }
 
-function InfoBox({ label, value, icon: Icon }) {
+function InfoBlock({ icon: Icon, label, value }) {
   return (
-    <div className="rounded-xl bg-slate-50 p-3">
-      <div className="flex items-center gap-2">
-        {Icon ? <Icon size={15} className="text-valencia-muted" /> : null}
-
-        <p className="text-xs font-black uppercase tracking-[0.1em] text-valencia-muted">
-          {label}
-        </p>
-      </div>
-
-      <p className="mt-2 text-sm font-black text-valencia-navy">{value}</p>
-    </div>
-  );
-}
-
-function ProjectProgress({ value, large = false }) {
-  const progress = Math.max(0, Math.min(100, Number(value) || 0));
-
-  return (
-    <div className={large ? "mt-5" : ""}>
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-black uppercase tracking-[0.1em] text-valencia-muted">
-          Progress
-        </span>
-
-        <span className="text-sm font-black text-valencia-navy">
-          {progress}%
-        </span>
-      </div>
-
-      <div
-        className={`overflow-hidden rounded-full bg-slate-100 ${
-          large ? "h-3" : "h-2"
-        }`}
-      >
-        <div
-          className="h-full rounded-full bg-valencia-orange transition-all"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function ProjectActions({ project, onEdit, onPause, onAbort, onDelete }) {
-  const status = normalizeStatus(project?.status);
-  const isPaused = status === "on_hold";
-
-  return (
-    <div className="flex flex-nowrap items-center gap-2 whitespace-nowrap">
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onEdit(project);
-        }}
-        className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-valencia-line bg-white px-3 text-xs font-black text-valencia-navy transition hover:border-valencia-orange hover:bg-orange-50 hover:text-valencia-orange"
-      >
-        <Pencil size={14} />
-        Edit
-      </button>
-
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onPause(project);
-        }}
-        className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-valencia-line bg-white px-3 text-xs font-black text-valencia-navy transition hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700"
-      >
-        {isPaused ? <PlayCircle size={14} /> : <PauseCircle size={14} />}
-        {isPaused ? "Resume" : "Pause"}
-      </button>
-
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onAbort(project);
-        }}
-        className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-valencia-line bg-white px-3 text-xs font-black text-valencia-navy transition hover:border-red-300 hover:bg-red-50 hover:text-red-600"
-      >
-        <XCircle size={14} />
-        Abort
-      </button>
-
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onDelete(project);
-        }}
-        className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-valencia-line bg-white px-3 text-xs font-black text-valencia-navy transition hover:border-red-300 hover:bg-red-50 hover:text-red-600"
-      >
-        <Trash2 size={14} />
-        Delete
-      </button>
+    <div className="rounded-xl bg-slate-50 p-4">
+      <p className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+        <Icon size={15} />
+        {label}
+      </p>
+      <p className="font-black text-[#061638]">{value}</p>
     </div>
   );
 }

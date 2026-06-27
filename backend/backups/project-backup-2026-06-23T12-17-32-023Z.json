@@ -1,0 +1,107 @@
+{
+  "createdAt": "2026-06-23T12:17:32.024Z",
+  "projects": [
+    {
+      "id": 1,
+      "name": "Webappp",
+      "description": "xyz",
+      "department": "Vending Machine",
+      "status": "active",
+      "start_date": "2026-06-04",
+      "end_date": "2026-06-18",
+      "created_by": 7,
+      "created_at": "2026-06-04 11:59:15",
+      "updated_at": "2026-06-22 15:21:48",
+      "progress": 0,
+      "priority": "medium",
+      "manager_id": 9,
+      "members": "[]",
+      "manager_name": null,
+      "open_tasks": 0,
+      "pending_tasks": 0,
+      "odoo_external_id": null,
+      "visibility": null,
+      "task_label": null,
+      "color_index": 0,
+      "project_source": null
+    },
+    {
+      "id": 2,
+      "name": "Bio-Enzyme Supplement R&D",
+      "description": "gsrg",
+      "department": "High Altitude Water",
+      "status": "active",
+      "start_date": "2026-06-09",
+      "end_date": "2026-06-30",
+      "created_by": 7,
+      "created_at": "2026-06-09 12:33:27",
+      "updated_at": "2026-06-23 15:31:19",
+      "progress": 0,
+      "priority": "medium",
+      "manager_id": "",
+      "members": "[\"[object Object]\"]",
+      "manager_name": null,
+      "open_tasks": 0,
+      "pending_tasks": 0,
+      "odoo_external_id": null,
+      "visibility": null,
+      "task_label": null,
+      "color_index": 0,
+      "project_source": null
+    }
+  ],
+  "tasks": [
+    {
+      "id": 1,
+      "project_id": 1,
+      "title": "xyz",
+      "description": "xyz",
+      "status": "Completed",
+      "priority": "medium",
+      "start_date": "2026-06-04",
+      "end_date": "2026-06-11",
+      "assigned_to": 3,
+      "department": "Vending Machine",
+      "created_by": 7,
+      "created_at": "2026-06-04 13:36:30",
+      "updated_at": "2026-06-04 15:22:25",
+      "completed_at": "2026-06-04 15:22:25"
+    },
+    {
+      "id": 2,
+      "project_id": 2,
+      "title": "Research",
+      "description": "document",
+      "status": "Pending",
+      "priority": "High",
+      "start_date": "2026-06-10",
+      "end_date": "2026-06-17",
+      "assigned_to": 12,
+      "department": "High Altitude Water",
+      "created_by": 7,
+      "created_at": "2026-06-10 11:06:18",
+      "updated_at": "2026-06-22 17:55:17",
+      "completed_at": null
+    }
+  ],
+  "subtasks": [
+    {
+      "id": 1,
+      "task_id": 1,
+      "title": "abc",
+      "status": "Completed",
+      "created_by": 3,
+      "created_at": "2026-06-04 15:09:51",
+      "updated_at": "2026-06-04 15:22:09"
+    },
+    {
+      "id": 2,
+      "task_id": 2,
+      "title": "read document",
+      "status": "In Progress",
+      "created_by": 7,
+      "created_at": "2026-06-10 11:06:50",
+      "updated_at": "2026-06-10 19:22:56"
+    }
+  ]
+}

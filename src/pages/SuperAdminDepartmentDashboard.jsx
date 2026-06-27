@@ -1309,13 +1309,15 @@ export default function SuperAdminDepartmentDashboard() {
         <div className="px-8 py-8">
           {activeSection === "dashboard" ? (
             <DashboardSection
-              metrics={metrics}
-              topProjects={topProjects}
-              tasks={departmentTasks}
-              users={departmentUsers}
-              chartData={chartData}
-              recentActivity={recentActivity}
-            />
+  metrics={metrics}
+  topProjects={topProjects}
+  allProjects={departmentProjects}
+  tasks={departmentTasks}
+  users={departmentUsers}
+  chartData={chartData}
+  recentActivity={recentActivity}
+  setActiveSection={setActiveSection}
+/>
           ) : null}
 
           {activeSection === "employees" ? (
@@ -1517,11 +1519,32 @@ function NotificationDropdown({
 function DashboardSection({
   metrics,
   topProjects,
+  allProjects = [],
   tasks,
   users,
   chartData,
   recentActivity,
+  setActiveSection,
 }) {
+  const [showAllProjects, setShowAllProjects] = useState(false);
+
+  const visibleProjects = showAllProjects ? allProjects : topProjects;
+
+  function scrollToProjects() {
+    setShowAllProjects(true);
+
+    setTimeout(() => {
+      const target = document.getElementById("top-priority-projects");
+
+      if (target) {
+        target.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }
+    }, 50);
+  }
+
   return (
     <div className="space-y-8">
       <section className="grid gap-6 md:grid-cols-2">
@@ -1530,6 +1553,7 @@ function DashboardSection({
           value={metrics.activeProjects}
           delta="+12% from last month"
           tone="blue"
+          onClick={scrollToProjects}
         />
 
         <MetricCard
@@ -1537,6 +1561,7 @@ function DashboardSection({
           value={metrics.teamMembers}
           delta="+8 from last month"
           tone="purple"
+          onClick={() => setActiveSection("employees")}
         />
 
         <MetricCard
@@ -1544,6 +1569,7 @@ function DashboardSection({
           value={metrics.completedTasks}
           delta="+23% from last month"
           tone="green"
+          onClick={scrollToProjects}
         />
 
         <MetricCard
@@ -1551,29 +1577,36 @@ function DashboardSection({
           value={metrics.pendingReviews}
           delta="-3 from last month"
           tone="pink"
+          onClick={() => setActiveSection("approvals")}
         />
       </section>
 
-      <section>
+      <section id="top-priority-projects">
         <div className="mb-4 flex items-end justify-between">
           <div>
-            <h2 className="text-xl font-black">Top Priority Projects</h2>
+            <h2 className="text-xl font-black">
+              {showAllProjects ? "All Projects" : "Top Priority Projects"}
+            </h2>
+
             <p className="text-sm text-slate-500">
-              Leading projects requiring immediate attention
+              {showAllProjects
+                ? "All projects under this division"
+                : "Leading projects requiring immediate attention"}
             </p>
           </div>
 
           <button
             type="button"
+            onClick={() => setShowAllProjects((current) => !current)}
             className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-black transition hover:border-[#FF6B35] hover:text-[#FF6B35]"
           >
-            View All →
+            {showAllProjects ? "Show Top →" : "View All →"}
           </button>
         </div>
 
         <div className="space-y-5">
-          {topProjects.length ? (
-            topProjects.map((project) => (
+          {visibleProjects.length ? (
+            visibleProjects.map((project) => (
               <ProjectCard
                 key={getProjectId(project) || getProjectName(project)}
                 project={project}
@@ -1630,7 +1663,7 @@ function DashboardSection({
               </div>
             ))
           ) : (
-            <div className="py-8 text-center text-slate-500">
+            <div className="py-8 text-center text-sm font-semibold text-slate-500">
               No recent activity found.
             </div>
           )}
@@ -5273,7 +5306,7 @@ function ActionModal({ title, children, onClose }) {
   );
 }
 
-function MetricCard({ title, value, tone }) {
+function MetricCard({ title, value, tone, onClick }) {
   const toneClasses = {
     blue: "bg-sky-100 text-sky-500",
     purple: "bg-purple-100 text-purple-500",
@@ -5281,8 +5314,14 @@ function MetricCard({ title, value, tone }) {
     pink: "bg-pink-100 text-pink-500",
   };
 
+  const Wrapper = onClick ? "button" : "div";
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm">
+    <Wrapper
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      className="w-full rounded-2xl border border-slate-200 bg-white p-7 text-left shadow-sm transition hover:-translate-y-1 hover:border-[#FF6B35] hover:shadow-[0_18px_38px_rgba(255,107,53,0.14)]"
+    >
       <div className="flex items-start justify-between">
         <p className="text-sm font-semibold text-slate-500">{title}</p>
 
@@ -5296,7 +5335,7 @@ function MetricCard({ title, value, tone }) {
       </div>
 
       <p className="mt-8 text-3xl font-black">{value}</p>
-    </div>
+    </Wrapper>
   );
 }
 function ProjectCard({ project, tasks, users }) {

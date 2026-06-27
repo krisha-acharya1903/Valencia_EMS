@@ -1,19 +1,20 @@
 import {
-  ArrowLeft,
+  BarChart3,
   CalendarDays,
+  CheckCircle2,
+  Clock3,
+  Columns3,
   ListChecks,
-  PauseCircle,
   Plus,
-  Save,
   Trash2,
   UsersRound,
   X,
-  XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { apiDelete, apiGet, apiPatch, apiPost } from "../services/api";
 import * as projectService from "../services/projectService";
 import * as userService from "../services/userService";
 
@@ -46,35 +47,36 @@ function normalizeId(value) {
   return String(value).trim();
 }
 
-function extractArray(response, key) {
+function extractArray(response) {
   if (Array.isArray(response)) return response;
-  if (key && Array.isArray(response?.[key])) return response[key];
-  if (Array.isArray(response?.data)) return response.data;
-  if (Array.isArray(response?.items)) return response.items;
   if (Array.isArray(response?.projects)) return response.projects;
   if (Array.isArray(response?.users)) return response.users;
+  if (Array.isArray(response?.employees)) return response.employees;
   if (Array.isArray(response?.tasks)) return response.tasks;
+  if (Array.isArray(response?.subtasks)) return response.subtasks;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.items)) return response.items;
   return [];
 }
 
-function getProjectId(project) {
+function getProjectId(project, index = 0) {
   return String(
     project?.id ||
       project?._id ||
       project?.projectId ||
       project?.project_id ||
       project?.uid ||
-      ""
+      index + 1
   );
 }
 
-function getProjectName(project) {
+function getProjectName(project, index = 0) {
   return (
     project?.name ||
     project?.title ||
     project?.projectName ||
     project?.project_name ||
-    "Untitled Project"
+    `Project ${index + 1}`
   );
 }
 
@@ -97,80 +99,42 @@ function getProjectDepartment(project) {
     project?.division ||
     project?.divisionName ||
     project?.division_name ||
-    "-"
+    "Unassigned"
   );
 }
 
-function getProjectStartDate(project) {
+function getProjectStatus(project) {
+  return (
+    project?.status ||
+    project?.projectStatus ||
+    project?.project_status ||
+    "active"
+  );
+}
+
+function getStartDate(project) {
   return (
     project?.startDate ||
     project?.start_date ||
     project?.fromDate ||
     project?.from_date ||
+    project?.createdAt ||
+    project?.created_at ||
     ""
   );
 }
 
-function getProjectEndDate(project) {
+function getEndDate(project) {
   return (
     project?.endDate ||
     project?.end_date ||
     project?.dueDate ||
     project?.due_date ||
     project?.deadline ||
+    project?.toDate ||
+    project?.to_date ||
     ""
   );
-}
-
-function getProjectStatus(project) {
-  return project?.status || project?.projectStatus || "active";
-}
-
-function normalizeStatus(value) {
-  const status = normalize(value);
-
-  if (!status) return "pending";
-
-  if (["active", "approved", "open", "ongoing"].includes(status)) {
-    return "active";
-  }
-
-  if (["in progress", "inprogress", "progress"].includes(status)) {
-    return "in_progress";
-  }
-
-  if (["hold", "on hold", "paused", "pause"].includes(status)) {
-    return "on_hold";
-  }
-
-  if (["abort", "aborted", "cancelled", "canceled", "rejected"].includes(status)) {
-    return "aborted";
-  }
-
-  if (["complete", "completed", "done", "finished"].includes(status)) {
-    return "completed";
-  }
-
-  if (["pending", "todo", "to do"].includes(status)) {
-    return "pending";
-  }
-
-  return status.replaceAll(" ", "_");
-}
-
-function formatStatus(value) {
-  const status = normalizeStatus(value);
-
-  if (status === "active") return "Active";
-  if (status === "on_hold") return "On Hold";
-  if (status === "aborted") return "Aborted";
-  if (status === "completed") return "Completed";
-  if (status === "pending") return "Pending";
-  if (status === "in_progress") return "In Progress";
-
-  return String(value || "Pending")
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function formatDate(value) {
@@ -178,7 +142,7 @@ function formatDate(value) {
 
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return value;
+  if (Number.isNaN(date.getTime())) return String(value);
 
   return date.toLocaleDateString("en-IN", {
     day: "2-digit",
@@ -187,8 +151,15 @@ function formatDate(value) {
   });
 }
 
-function getTaskTitle(task) {
-  return task?.title || task?.name || task?.taskName || task?.task || "Untitled Task";
+function getTimeline(project) {
+  const start = formatDate(getStartDate(project));
+  const end = formatDate(getEndDate(project));
+
+  if (start === "-" && end === "-") return "-";
+  if (start === "-") return end;
+  if (end === "-") return start;
+
+  return `${start} to ${end}`;
 }
 
 function getTaskId(task, index = 0) {
@@ -197,7 +168,20 @@ function getTaskId(task, index = 0) {
       task?._id ||
       task?.taskId ||
       task?.task_id ||
-      `${getTaskTitle(task)}-${index}`
+      task?.uid ||
+      index + 1
+  );
+}
+
+function getTaskName(task, index = 0) {
+  return (
+    task?.name ||
+    task?.title ||
+    task?.taskName ||
+    task?.task_name ||
+    task?.taskTitle ||
+    task?.task_title ||
+    `Task ${index + 1}`
   );
 }
 
@@ -206,15 +190,100 @@ function getTaskDescription(task) {
 }
 
 function getTaskPriority(task) {
-  return task?.priority || task?.taskPriority || "Medium";
+  return task?.priority || task?.taskPriority || "Normal";
+}
+
+function getTaskStartDate(task) {
+  return (
+    task?.startDate ||
+    task?.start_date ||
+    task?.fromDate ||
+    task?.from_date ||
+    task?.createdAt ||
+    task?.created_at ||
+    ""
+  );
+}
+
+function getTaskEndDate(task) {
+  return (
+    task?.endDate ||
+    task?.end_date ||
+    task?.dueDate ||
+    task?.due_date ||
+    task?.deadline ||
+    task?.toDate ||
+    task?.to_date ||
+    ""
+  );
+}
+
+function getTaskTimeline(task) {
+  const start = formatDate(getTaskStartDate(task));
+  const end = formatDate(getTaskEndDate(task));
+
+  if (start === "-" && end === "-") return "-";
+  if (start === "-") return end;
+  if (end === "-") return start;
+
+  return `${start} to ${end}`;
 }
 
 function getTaskStatus(task) {
-  return task?.status || task?.taskStatus || "Pending";
+  return normalize(
+    task?.status || task?.taskStatus || task?.task_status || "pending"
+  );
+}
+
+function normalizeTaskStatusForApi(status) {
+  const clean = normalize(status);
+
+  if (clean === "completed" || clean === "complete" || clean === "done") {
+    return "Completed";
+  }
+
+  if (clean === "in progress" || clean === "inprogress" || clean === "doing") {
+    return "In Progress";
+  }
+
+  return "Pending";
+}
+
+function getPrettyTaskStatus(task) {
+  const status = getTaskStatus(task);
+
+  if (status === "completed" || status === "complete" || status === "done") {
+    return "Completed";
+  }
+
+  if (status === "in progress" || status === "inprogress" || status === "doing") {
+    return "In Progress";
+  }
+
+  return "Pending";
+}
+
+function isTaskComplete(task) {
+  const status = getTaskStatus(task);
+
+  return (
+    task?.done === true ||
+    task?.completed === true ||
+    status === "done" ||
+    status === "complete" ||
+    status === "completed"
+  );
+}
+
+function isTaskInProgress(task) {
+  const status = getTaskStatus(task);
+  return status === "in progress" || status === "inprogress" || status === "doing";
 }
 
 function getTaskAssignedRaw(task) {
   return (
+    task?.assignedUser ||
+    task?.assigned_user ||
     task?.assignedTo ||
     task?.assigned_to ||
     task?.assignee ||
@@ -240,113 +309,55 @@ function getTaskAssignedId(task) {
       task?.employee_id ||
       task?.userId ||
       task?.user_id ||
+      task?.assigned_to ||
+      task?.assignedTo ||
       getTaskAssignedRaw(task)
   );
 }
 
-function getTaskAssignedName(task, usersMap = new Map(), teamMembers = []) {
-  const assignedId = getTaskAssignedId(task);
-  const raw = getTaskAssignedRaw(task);
-
-  if (typeof raw === "object" && raw) {
-    return (
-      raw.name ||
-      raw.fullName ||
-      raw.full_name ||
-      raw.displayName ||
-      raw.display_name ||
-      raw.employeeName ||
-      raw.employee_name ||
-      raw.email ||
-      "Assigned Employee"
-    );
-  }
-
-  const keys = [
-    assignedId,
-    raw,
-    task?.assignedToId,
-    task?.assigned_to_id,
-    task?.assigneeId,
-    task?.assignee_id,
-    task?.employeeId,
-    task?.employee_id,
-    task?.userId,
-    task?.user_id,
-  ]
-    .filter(Boolean)
-    .map((item) => normalizeId(item).toLowerCase());
-
-  for (const key of keys) {
-    const matchedUser = usersMap.get(key);
-
-    if (matchedUser) {
-      return getUserName(matchedUser);
-    }
-
-    const matchedMember = teamMembers.find((member) => {
-      const memberKeys = getMemberKeys(member);
-      return memberKeys.includes(key);
-    });
-
-    if (matchedMember) {
-      return getUserName(matchedMember);
-    }
-  }
-
-  if (/^\d+$/.test(String(raw || assignedId || "")) && teamMembers.length === 1) {
-    return getUserName(teamMembers[0]);
-  }
-
-  if (/^\d+$/.test(String(raw || assignedId || ""))) {
-    return "Assigned Employee";
-  }
-
-  return String(raw || assignedId || "Assigned Employee");
-}
-
-function getTaskDeadline(task) {
-  return (
-    task?.deadline ||
-    task?.dueDate ||
-    task?.due_date ||
-    task?.endDate ||
-    task?.end_date ||
-    ""
-  );
-}
-
-function getTaskStartDate(task) {
-  return task?.startDate || task?.start_date || task?.fromDate || task?.from_date || "";
-}
-
-function getTaskEndDate(task) {
-  return (
-    task?.endDate ||
-    task?.end_date ||
-    task?.dueDate ||
-    task?.due_date ||
-    task?.deadline ||
-    ""
-  );
-}
-
 function getTaskSubtasks(task) {
-  if (Array.isArray(task?.subtasks)) return task.subtasks;
-  if (Array.isArray(task?.sub_tasks)) return task.sub_tasks;
-  if (Array.isArray(task?.children)) return task.children;
-  if (Array.isArray(task?.subTasks)) return task.subTasks;
-  return [];
+  const subtasks =
+    task?.subtasks ||
+    task?.subTasks ||
+    task?.sub_tasks ||
+    task?.children ||
+    task?.checklist ||
+    [];
+
+  return Array.isArray(subtasks) ? subtasks : [];
 }
 
-function getSubtaskTitle(subtask, index) {
-  return (
-    subtask?.title ||
-    subtask?.name ||
-    subtask?.subtask ||
-    subtask?.description ||
-    `Subtask ${index + 1}`
-  );
+function getProjectTasks(project) {
+  const tasks =
+    project?.tasks ||
+    project?.taskList ||
+    project?.task_list ||
+    project?.todos ||
+    project?.toDos ||
+    project?.checklist ||
+    [];
+
+  return Array.isArray(tasks) ? tasks : [];
+}
+
+function getProjectProgress(project) {
+  const tasks = getProjectTasks(project);
+
+  if (!tasks.length) return Number(project?.progress || 0) || 0;
+
+  const completed = tasks.filter(isTaskComplete).length;
+
+  return Math.round((completed / tasks.length) * 100);
+}
+
+function getProjectComputedStatus(project) {
+  const tasks = getProjectTasks(project);
+
+  if (!tasks.length) return "Pending";
+  if (tasks.every(isTaskComplete)) return "Completed";
+  if (tasks.some(isTaskInProgress)) return "In Progress";
+
+  return "Pending";
 }
 
 function getUserId(user) {
@@ -358,13 +369,14 @@ function getUserId(user) {
       user?.user_id ||
       user?.employeeId ||
       user?.employee_id ||
-      user?.email ||
-      user?.name ||
       ""
   );
 }
 
 function getUserName(user) {
+  if (!user) return "Unassigned";
+  if (typeof user === "string") return user;
+
   return (
     user?.name ||
     user?.fullName ||
@@ -374,7 +386,23 @@ function getUserName(user) {
     user?.employeeName ||
     user?.employee_name ||
     user?.email ||
-    "Team Member"
+    "Employee"
+  );
+}
+
+function getUserEmail(user) {
+  return user?.email || user?.userEmail || user?.user_email || "";
+}
+
+function getUserDepartment(user) {
+  return (
+    user?.department ||
+    user?.departmentName ||
+    user?.department_name ||
+    user?.division ||
+    user?.divisionName ||
+    user?.division_name ||
+    "Unassigned"
   );
 }
 
@@ -383,40 +411,54 @@ function getUserRole(user) {
 }
 
 function getInitials(name) {
-  const words = String(name || "U").trim().split(" ").filter(Boolean);
+  const parts = String(name || "U").split(" ").filter(Boolean);
 
-  if (!words.length) return "U";
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  }
 
-  return words
-    .slice(0, 2)
-    .map((word) => word[0])
-    .join("")
-    .toUpperCase();
+  return String(parts[0] || "U").slice(0, 2).toUpperCase();
 }
 
-function getMemberKeys(member) {
+function getUserKeys(user) {
   return [
-    member?.id,
-    member?._id,
-    member?.uid,
-    member?.userId,
-    member?.user_id,
-    member?.employeeId,
-    member?.employee_id,
-    member?.email,
-    member?.name,
-    member?.fullName,
-    member?.full_name,
-    member?.displayName,
-    member?.display_name,
-    member?.employeeName,
-    member?.employee_name,
+    getUserId(user),
+    user?.id,
+    user?._id,
+    user?.uid,
+    user?.userId,
+    user?.user_id,
+    user?.employeeId,
+    user?.employee_id,
+    user?.email,
+    user?.name,
+    user?.fullName,
+    user?.full_name,
+    user?.displayName,
+    user?.display_name,
+    user?.employeeName,
+    user?.employee_name,
   ]
     .filter(Boolean)
     .map((item) => normalizeId(item).toLowerCase());
 }
 
-function projectMembers(project) {
+function isEmployeeLike(user) {
+  const role = normalize(user?.role || getUserRole(user));
+
+  if (!role) return true;
+
+  return (
+    role === "employee" ||
+    role === "team member" ||
+    role === "teammember" ||
+    role === "staff" ||
+    role === "user" ||
+    role === "member"
+  );
+}
+
+function getProjectMemberSources(project) {
   const fields = [
     project?.members,
     project?.member,
@@ -431,6 +473,16 @@ function projectMembers(project) {
     project?.team,
     project?.teamMembers,
     project?.team_members,
+    project?.participants,
+    project?.contributors,
+    project?.assignedTo,
+    project?.assigned_to,
+    project?.assignee,
+    project?.assignees,
+    project?.assignedUser,
+    project?.assigned_user,
+    project?.assignedEmployee,
+    project?.assigned_employee,
     project?.employeeIds,
     project?.employee_ids,
   ];
@@ -438,178 +490,215 @@ function projectMembers(project) {
   return fields.flatMap((field) => {
     if (!field) return [];
 
-    if (Array.isArray(field)) {
-      return field;
-    }
+    if (Array.isArray(field)) return field;
 
     if (typeof field === "string") {
-      return field
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
+      const trimmed = field.trim();
+
+      if (!trimmed) return [];
+
+      try {
+        const parsed = JSON.parse(trimmed);
+
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && typeof parsed === "object") return [parsed];
+      } catch {
+        return trimmed
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
     }
 
     return [field];
   });
 }
 
-function buildUserLookup(users) {
-  const map = new Map();
+function getProjectAssignedEmployees(project, users) {
+  const memberSources = getProjectMemberSources(project);
 
-  users.forEach((user) => {
-    const keys = getMemberKeys(user);
+  if (!memberSources.length) return [];
 
-    keys.forEach((key) => {
-      if (key) map.set(key, user);
-    });
+  const memberKeys = memberSources
+    .flatMap((member) => {
+      if (typeof member === "object" && member) {
+        return getUserKeys(member);
+      }
+
+      return [normalizeId(member).toLowerCase()];
+    })
+    .filter(Boolean);
+
+  const matchedUsers = users.filter((user) => {
+    const userKeys = getUserKeys(user);
+    return userKeys.some((key) => memberKeys.includes(key));
   });
 
-  return map;
+  if (matchedUsers.length) return matchedUsers;
+
+  return memberSources.map((member, index) => {
+    if (typeof member === "object" && member) return member;
+
+    return {
+      id: String(member || index),
+      name: String(member || `Member ${index + 1}`),
+      email: "",
+    };
+  });
 }
 
-function resolveMember(rawMember, usersMap, index = 0) {
-  const key = normalizeId(rawMember).toLowerCase();
-  const matched = usersMap.get(key);
+function getAssignedEmployeeForTask(task, users) {
+  const taskAssignedId = getTaskAssignedId(task).toLowerCase();
+  const raw = getTaskAssignedRaw(task);
 
-  if (typeof rawMember === "object" && rawMember) {
-    const rawKeys = getMemberKeys(rawMember);
-    const matchedFromObject = rawKeys.map((item) => usersMap.get(item)).find(Boolean);
+  if (!taskAssignedId && !raw) return null;
 
-    return {
-      ...(matched || matchedFromObject || {}),
-      ...rawMember,
-      id:
-        normalizeId(rawMember) ||
-        getUserId(matched || matchedFromObject) ||
-        `member-${index}`,
-      name: getUserName({ ...(matched || matchedFromObject || {}), ...rawMember }),
-      role: getUserRole({ ...(matched || matchedFromObject || {}), ...rawMember }),
-    };
-  }
+  const matched = users.find((user) => {
+    const keys = getUserKeys(user);
+    return keys.includes(taskAssignedId) || keys.includes(normalizeId(raw).toLowerCase());
+  });
 
-  if (matched) {
-    return {
-      ...matched,
-      id: getUserId(matched),
-      name: getUserName(matched),
-      role: getUserRole(matched),
-    };
-  }
-
-  if (/^\d+$/.test(String(rawMember || ""))) {
-    return null;
-  }
+  if (matched) return matched;
+  if (typeof raw === "object" && raw) return raw;
 
   return {
-    id: normalizeId(rawMember) || `member-${index}`,
-    name: String(rawMember || `Member ${index + 1}`),
-    role: "Team Member",
+    id: taskAssignedId || raw,
+    name: String(raw || taskAssignedId || "Unassigned"),
   };
 }
 
-function isTaskForMember(task, member, teamMembers = []) {
-  const memberKeys = getMemberKeys(member);
+function taskMatchesMember(task, member) {
+  if (!member) return true;
 
+  const memberKeys = getUserKeys(member);
   const taskKeys = [
     getTaskAssignedId(task),
-    getTaskAssignedName(task),
-    task?.assignedTo,
-    task?.assigned_to,
+    getTaskAssignedRaw(task),
     task?.assignedToId,
     task?.assigned_to_id,
-    task?.assignee,
     task?.assigneeId,
     task?.assignee_id,
-    task?.employee,
     task?.employeeId,
     task?.employee_id,
-    task?.user,
     task?.userId,
     task?.user_id,
+    task?.assigned_to,
+    task?.assignedTo,
   ]
     .filter(Boolean)
     .flatMap((item) => {
-      if (typeof item === "object" && item) {
-        return [
-          item.id,
-          item._id,
-          item.uid,
-          item.userId,
-          item.user_id,
-          item.employeeId,
-          item.employee_id,
-          item.email,
-          item.name,
-          item.fullName,
-          item.full_name,
-          item.displayName,
-          item.display_name,
-          item.employeeName,
-          item.employee_name,
-        ];
-      }
+      if (typeof item === "object" && item) return getUserKeys(item);
+      return [normalizeId(item).toLowerCase()];
+    });
 
-      return [item];
-    })
-    .filter(Boolean)
-    .map((item) => normalizeId(item).toLowerCase());
+  return memberKeys.some((key) => taskKeys.includes(key));
+}
 
-  const directMatch = memberKeys.some((key) => taskKeys.includes(key));
+async function fetchUsers(profile) {
+  if (typeof userService.getUsers === "function") {
+    return userService.getUsers(profile);
+  }
 
-  if (directMatch) return true;
+  if (typeof userService.fetchUsers === "function") {
+    return userService.fetchUsers(profile);
+  }
 
-  const assignedValue = String(getTaskAssignedRaw(task) || getTaskAssignedId(task) || "");
+  if (typeof userService.getAllUsers === "function") {
+    return userService.getAllUsers(profile);
+  }
 
-  if (/^\d+$/.test(assignedValue) && teamMembers.length === 1) {
-    const onlyMemberKey = String(
-      teamMembers[0]?.id || teamMembers[0]?.email || teamMembers[0]?.name || ""
+  return [];
+}
+
+async function fetchProjects(profile) {
+  if (typeof projectService.getAllProjects === "function") {
+    return projectService.getAllProjects(profile);
+  }
+
+  if (typeof projectService.getProjects === "function") {
+    return projectService.getProjects(profile);
+  }
+
+  if (typeof projectService.fetchProjects === "function") {
+    return projectService.fetchProjects(profile);
+  }
+
+  return [];
+}
+
+async function fetchProject(projectId, profile) {
+  if (typeof projectService.getProjectById === "function") {
+    return projectService.getProjectById(projectId, profile);
+  }
+
+  if (typeof projectService.getProject === "function") {
+    return projectService.getProject(projectId, profile);
+  }
+
+  const response = await fetchProjects(profile);
+  const projects = extractArray(response);
+
+  return (
+    projects.find((project, index) => getProjectId(project, index) === String(projectId)) ||
+    projects[Number(projectId) - 1] ||
+    null
+  );
+}
+
+async function fetchProjectTasks(projectId) {
+  const taskSources = [];
+
+  try {
+    const allTasksResponse = await apiGet("/tasks");
+    taskSources.push(...extractArray(allTasksResponse));
+  } catch (error) {
+    console.warn("Could not fetch /tasks:", error?.message);
+  }
+
+  try {
+    const projectTaskResponse = await apiGet(`/employee-project-tasks/${projectId}`);
+    taskSources.push(...extractArray(projectTaskResponse));
+  } catch {
+    // Optional route. Ignore.
+  }
+
+  const unique = [];
+  const seen = new Set();
+
+  taskSources.forEach((task, index) => {
+    const taskProjectId = String(
+      task?.project_id ||
+        task?.projectId ||
+        task?.projectID ||
+        task?.parent_project_id ||
+        task?.parentProjectId ||
+        ""
     );
 
-    const currentMemberKey = String(member?.id || member?.email || member?.name || "");
+    if (taskProjectId && taskProjectId !== String(projectId)) return;
 
-    return onlyMemberKey === currentMemberKey;
-  }
+    const key = String(task?.id || task?.taskId || task?.task_id || index);
 
-  return false;
-}
+    if (seen.has(key)) return;
 
-function statusClass(status) {
-  const value = normalizeStatus(status);
+    seen.add(key);
+    unique.push(task);
+  });
 
-  if (value === "completed") return "bg-emerald-50 text-emerald-700 border-emerald-100";
-  if (value === "active") return "bg-blue-50 text-blue-700 border-blue-100";
-  if (value === "on_hold") return "bg-yellow-50 text-yellow-700 border-yellow-100";
-  if (value === "aborted") return "bg-red-50 text-red-700 border-red-100";
-  if (value === "in_progress") return "bg-orange-50 text-[#FF6B35] border-orange-100";
-
-  return "bg-orange-50 text-[#FF6B35] border-orange-100";
-}
-
-function priorityClass(priority) {
-  const value = normalize(priority);
-
-  if (value.includes("high") || value.includes("critical")) {
-    return "text-red-600";
-  }
-
-  if (value.includes("low")) {
-    return "text-emerald-600";
-  }
-
-  return "text-[#061638]";
+  return unique;
 }
 
 function Modal({ title, children, onClose }) {
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-2xl">
+      <div className="w-full max-w-[720px] overflow-hidden rounded-2xl bg-white shadow-[0_24px_70px_rgba(0,0,0,0.24)]">
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
-          <h3 className="text-lg font-black text-[#061638]">{title}</h3>
+          <h2 className="text-xl font-black text-[#061638]">{title}</h2>
 
           <button
             type="button"
             onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-[#061638] transition hover:bg-red-50 hover:text-red-500"
           >
             <X size={18} />
           </button>
@@ -621,386 +710,305 @@ function Modal({ title, children, onClose }) {
   );
 }
 
-async function fetchProjects(profile) {
-  if (projectService.getAllProjects) return projectService.getAllProjects(profile);
-  if (projectService.getProjects) return projectService.getProjects(profile);
-  if (projectService.fetchProjects) return projectService.fetchProjects(profile);
-  return [];
-}
-
-async function fetchProjectById(projectId, profile) {
-  if (projectService.getProjectById) return projectService.getProjectById(projectId, profile);
-  if (projectService.getProject) return projectService.getProject(projectId, profile);
-
-  const response = await fetchProjects(profile);
-  const projects = extractArray(response, "projects");
-
-  return (
-    projects.find((project) => String(getProjectId(project)) === String(projectId)) ||
-    null
-  );
-}
-
-async function updateProjectRecord(projectId, payload, profile) {
-  if (projectService.updateProject) return projectService.updateProject(projectId, payload, profile);
-  if (projectService.editProject) return projectService.editProject(projectId, payload, profile);
-
-  throw new Error("Project update function not found.");
-}
-
-async function fetchUsers() {
-  if (userService.getUsers) return userService.getUsers();
-  if (userService.fetchUsers) return userService.fetchUsers();
-  return [];
-}
-
-async function fetchProjectTasks(projectId, project) {
-  if (projectService.getProjectTasks) return projectService.getProjectTasks(projectId);
-  if (projectService.getTasksByProject) return projectService.getTasksByProject(projectId);
-
-  const source =
-    project?.tasks ||
-    project?.taskList ||
-    project?.task_list ||
-    project?.todos ||
-    project?.toDos ||
-    project?.checklist ||
-    [];
-
-  return Array.isArray(source) ? source : [];
-}
-
 export default function ProjectDetails() {
   const { projectId } = useParams();
-  const navigate = useNavigate();
   const { profile } = useAuth();
 
   const [project, setProject] = useState(null);
-  const [tasks, setTasks] = useState([]);
   const [users, setUsers] = useState([]);
+  const [selectedMemberId, setSelectedMemberId] = useState("all");
+  const [showProgress, setShowProgress] = useState(false);
+
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [subtaskModalOpen, setSubtaskModalOpen] = useState(false);
+
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-  const [selectedUserId, setSelectedUserId] = useState("all");
-  const [activeModal, setActiveModal] = useState("");
-  const [selectedTask, setSelectedTask] = useState(null);
-
-  const [taskForm, setTaskForm] = useState({
-    title: "",
-    assignedTo: "",
-    status: "pending",
-    priority: "medium",
-    startDate: "",
-    endDate: "",
-    description: "",
-  });
-
-  const [subTaskForm, setSubTaskForm] = useState({
-    title: "",
-    status: "pending",
-  });
-
-  async function loadPage() {
+  const loadData = useCallback(async () => {
     setLoading(true);
 
     try {
-      const foundProject = await fetchProjectById(projectId, profile);
+      const [projectResponse, usersResponse] = await Promise.all([
+        fetchProject(projectId, profile),
+        fetchUsers(profile),
+      ]);
 
-      if (!foundProject) {
-        toast.error("Project not found.");
+      if (!projectResponse) {
         setProject(null);
-        setTasks([]);
+        setUsers([]);
         return;
       }
 
-      const userResponse = await fetchUsers();
-      const userList = extractArray(userResponse, "users");
+      const realProjectId = getProjectId(projectResponse, Number(projectId) - 1);
+      const backendTasks = await fetchProjectTasks(realProjectId);
+      const projectTasks = getProjectTasks(projectResponse);
+      const finalTasks = backendTasks.length ? backendTasks : projectTasks;
 
-      const taskResponse = await fetchProjectTasks(projectId, foundProject);
-      const taskList = extractArray(taskResponse, "tasks");
+      setProject({
+        ...projectResponse,
+        tasks: finalTasks,
+        taskList: finalTasks,
+        task_list: finalTasks,
+      });
 
-      setProject(foundProject);
-      setUsers(userList);
-      setTasks(taskList);
+      setUsers(extractArray(usersResponse).filter(isEmployeeLike));
     } catch (error) {
-      console.error("Project details load error:", error);
-      toast.error(error?.message || "Failed to load project details.");
+      console.error("Project detail load error:", error);
+      toast.error(error?.message || "Failed to load project.");
       setProject(null);
-      setTasks([]);
       setUsers([]);
     } finally {
       setLoading(false);
     }
-  }
+  }, [projectId, profile]);
 
   useEffect(() => {
-    loadPage();
-  }, [projectId]);
+    loadData();
+  }, [loadData]);
 
-  const usersMap = useMemo(() => buildUserLookup(users), [users]);
-
-  const teamMembers = useMemo(() => {
-    if (!project) return [];
-
-    const explicitMembers = projectMembers(project)
-      .map((member, index) => resolveMember(member, usersMap, index))
-      .filter(Boolean);
-
-    const map = new Map();
-
-    explicitMembers.forEach((member) => {
-      const key = String(member.id || member.email || member.name || "").toLowerCase();
-
-      if (!key) return;
-
-      map.set(key, {
-        ...(map.get(key) || {}),
-        ...member,
-      });
-    });
-
-    return Array.from(map.values());
-  }, [project, usersMap]);
-
-  const visibleTasks = useMemo(() => {
-    if (selectedUserId === "all") return tasks;
-
-    const selectedMember = teamMembers.find(
-      (member) => String(member.id || member.email || member.name) === String(selectedUserId)
-    );
-
-    if (!selectedMember) return tasks;
-
-    return tasks.filter((task) => isTaskForMember(task, selectedMember, teamMembers));
-  }, [tasks, selectedUserId, teamMembers]);
+  const assignedEmployees = useMemo(() => {
+    return getProjectAssignedEmployees(project, users);
+  }, [project, users]);
 
   const selectedMember = useMemo(() => {
-    if (selectedUserId === "all") return null;
+    if (selectedMemberId === "all") return null;
 
     return (
-      teamMembers.find(
-        (member) => String(member.id || member.email || member.name) === String(selectedUserId)
-      ) || null
+      assignedEmployees.find((employee) => getUserId(employee) === selectedMemberId) ||
+      null
     );
-  }, [selectedUserId, teamMembers]);
+  }, [assignedEmployees, selectedMemberId]);
+
+  const allTasks = useMemo(() => {
+    return getProjectTasks(project);
+  }, [project]);
+
+  const visibleTasks = useMemo(() => {
+    if (!selectedMember) return allTasks;
+
+    return allTasks.filter((task) => taskMatchesMember(task, selectedMember));
+  }, [allTasks, selectedMember]);
+
+  const progressPercent = useMemo(() => {
+    return getProjectProgress({
+      ...project,
+      tasks: visibleTasks,
+    });
+  }, [project, visibleTasks]);
 
   const taskStats = useMemo(() => {
-    const total = tasks.length;
-    const completed = tasks.filter(
-      (task) => normalizeStatus(getTaskStatus(task)) === "completed"
-    ).length;
-
-    const progress = total ? Math.round((completed / total) * 100) : 0;
+    const completed = visibleTasks.filter(isTaskComplete).length;
+    const inProgress = visibleTasks.filter(isTaskInProgress).length;
+    const pending = Math.max(0, visibleTasks.length - completed - inProgress);
 
     return {
-      total,
+      total: visibleTasks.length,
       completed,
-      progress,
-      status:
-        progress === 100
-          ? "Completed"
-          : tasks.some((task) => normalizeStatus(getTaskStatus(task)) === "in_progress")
-          ? "In Progress"
-          : "Pending",
+      inProgress,
+      pending,
     };
-  }, [tasks]);
+  }, [visibleTasks]);
 
-  async function saveProjectWithTasks(nextTasks, successMessage) {
-    if (!project) return;
+  async function handleTaskStatusChange(taskIndex, nextStatus) {
+    const task = allTasks[taskIndex];
 
-    const id = getProjectId(project);
+    if (!task) return;
 
-    const payload = {
-      ...project,
-      tasks: nextTasks,
-      taskList: nextTasks,
-    };
+    const taskId = getTaskId(task, taskIndex);
 
-    setTasks(nextTasks);
-    setProject(payload);
+    if (!task?.id && !task?.taskId && !task?.task_id) {
+      toast.error("This task is not saved in database yet.");
+      return;
+    }
+
+    setSaving(true);
 
     try {
-      await updateProjectRecord(id, payload, profile);
-      toast.success(successMessage);
+      await apiPatch(`/tasks/${taskId}/status`, {
+        status: normalizeTaskStatusForApi(nextStatus),
+      });
+
+      toast.success("Task status updated.");
+      await loadData();
     } catch (error) {
-      toast.error(error?.message || "Saved locally. Backend update failed.");
+      console.error("Task status update error:", error);
+      toast.error(error?.message || "Failed to update task status.");
+    } finally {
+      setSaving(false);
     }
   }
 
-  function openAddTask() {
-    setTaskForm({
-      title: "",
-      assignedTo: selectedMember?.id || selectedMember?.email || selectedMember?.name || "",
-      status: "pending",
-      priority: "medium",
-      startDate: "",
-      endDate: "",
-      description: "",
-    });
-
-    setActiveModal("task");
-  }
-
-  function submitTask(event) {
-    event.preventDefault();
-
-    if (!taskForm.title.trim()) {
-      toast.error("Task title is required.");
-      return;
-    }
-
-    const assignedMember = teamMembers.find(
-      (member) => String(member.id || member.email || member.name) === String(taskForm.assignedTo)
-    );
-
-    const newTask = {
-      id: Date.now(),
-      title: taskForm.title.trim(),
-      description: taskForm.description.trim(),
-      assignedTo: assignedMember
-        ? {
-            id: assignedMember.id,
-            name: getUserName(assignedMember),
-            email: assignedMember.email || "",
-          }
-        : taskForm.assignedTo || "",
-      assignedToId: assignedMember?.id || taskForm.assignedTo || "",
-      assignedToName: assignedMember ? getUserName(assignedMember) : taskForm.assignedTo || "",
-      assignee: assignedMember ? getUserName(assignedMember) : taskForm.assignedTo || "",
-      status: taskForm.status,
-      priority: taskForm.priority,
-      startDate: taskForm.startDate,
-      endDate: taskForm.endDate,
-      subtasks: [],
-    };
-
-    saveProjectWithTasks([...tasks, newTask], "Task added.");
-    setActiveModal("");
-  }
-
-  function openAddSubTask(task = null) {
-    setSelectedTask(task || visibleTasks[0] || null);
-    setSubTaskForm({
-      title: "",
-      status: "pending",
-    });
-    setActiveModal("subtask");
-  }
-
-  function submitSubTask(event) {
-    event.preventDefault();
-
-    if (!selectedTask) {
-      toast.error("Select a task first.");
-      return;
-    }
-
-    if (!subTaskForm.title.trim()) {
-      toast.error("Sub task title is required.");
-      return;
-    }
-
-    const selectedTaskId = getTaskId(selectedTask);
-
-    const nextTasks = tasks.map((task, index) => {
-      const currentTaskId = getTaskId(task, index);
-
-      if (currentTaskId !== selectedTaskId) return task;
-
-      return {
-        ...task,
-        subtasks: [
-          ...getTaskSubtasks(task),
-          {
-            id: Date.now(),
-            title: subTaskForm.title.trim(),
-            status: subTaskForm.status,
-          },
-        ],
-      };
-    });
-
-    saveProjectWithTasks(nextTasks, "Sub task added.");
-    setActiveModal("");
-    setSelectedTask(null);
-  }
-
-  function updateTaskStatus(task, nextStatus) {
-    const taskId = getTaskId(task);
-
-    const nextTasks = tasks.map((item, index) => {
-      if (getTaskId(item, index) !== taskId) return item;
-
-      return {
-        ...item,
-        status: nextStatus,
-      };
-    });
-
-    saveProjectWithTasks(nextTasks, "Task status updated.");
-  }
-
-  function updateSubTaskStatus(task, subtaskIndex, nextStatus) {
-    const taskId = getTaskId(task);
-
-    const nextTasks = tasks.map((item, index) => {
-      if (getTaskId(item, index) !== taskId) return item;
-
-      return {
-        ...item,
-        subtasks: getTaskSubtasks(item).map((subtask, currentIndex) =>
-          currentIndex === subtaskIndex
-            ? {
-                ...subtask,
-                status: nextStatus,
-              }
-            : subtask
-        ),
-      };
-    });
-
-    saveProjectWithTasks(nextTasks, "Sub task status updated.");
-  }
-
-  async function updateProjectStatus(nextStatus) {
+  async function addTask(payload) {
     if (!project) return;
 
-    const id = getProjectId(project);
-    const payload = {
-      ...project,
-      status: nextStatus,
-    };
+    const realProjectId = getProjectId(project, Number(projectId) - 1);
 
-    setProject(payload);
+    const selectedUser = users.find((user) => {
+      const userId = String(getUserId(user));
+      const userEmail = String(getUserEmail(user)).toLowerCase();
+      const userName = String(getUserName(user)).toLowerCase();
 
-    try {
-      await updateProjectRecord(id, payload, profile);
-      toast.success(
-        nextStatus === "on_hold"
-          ? "Project put on hold."
-          : nextStatus === "aborted"
-          ? "Project aborted."
-          : "Project updated."
+      const payloadId = String(
+        payload.assignedToId ||
+          payload.assigned_to ||
+          payload.assignedTo ||
+          payload.employeeId ||
+          ""
       );
+
+      const payloadEmail = String(
+        payload.assignedUser?.email ||
+          payload.assignedTo?.email ||
+          ""
+      ).toLowerCase();
+
+      const payloadName = String(
+        payload.assignedUser?.name ||
+          payload.assignedTo?.name ||
+          payload.assignedTo ||
+          ""
+      ).toLowerCase();
+
+      return (
+        userId === payloadId ||
+        userEmail === payloadEmail ||
+        userName === payloadName
+      );
+    });
+
+    const assignedTo = selectedUser ? getUserId(selectedUser) : "";
+
+    if (!assignedTo) {
+      toast.error("Assigned employee ID missing. Select employee again.");
+      return;
+    }
+
+    setSaving(true);
+
+    const taskPayload = {
+      project_id: realProjectId,
+      projectId: realProjectId,
+
+      title: payload.title || payload.name,
+      name: payload.title || payload.name,
+
+      description: payload.description || "",
+
+      assigned_to: assignedTo,
+      assignedTo: assignedTo,
+      assignedToId: assignedTo,
+
+      status: normalizeTaskStatusForApi(payload.status || "Pending"),
+      priority: payload.priority || "Normal",
+
+      start_date: payload.startDate || payload.start_date || "",
+      startDate: payload.startDate || payload.start_date || "",
+
+      end_date: payload.endDate || payload.end_date || payload.dueDate || "",
+      endDate: payload.endDate || payload.end_date || payload.dueDate || "",
+      dueDate: payload.dueDate || payload.endDate || payload.end_date || "",
+
+      department: getProjectDepartment(project),
+    };
+
+    try {
+      await apiPost("/tasks", taskPayload);
+
+      toast.success("Task assigned and saved.");
+      setTaskModalOpen(false);
+
+      try {
+        await loadData();
+      } catch (reloadError) {
+        console.warn("Task created, but reload failed:", reloadError);
+      }
     } catch (error) {
-      toast.error(error?.message || "Failed to update project.");
+      console.warn("Create task request returned error:", error);
+
+      try {
+        await loadData();
+
+        toast.success("Task assigned and saved.");
+        setTaskModalOpen(false);
+      } catch (reloadError) {
+        console.error("Add task error:", error);
+        console.error("Reload after failed create also failed:", reloadError);
+
+        toast.error(error?.message || "Failed to save task.");
+      }
+    } finally {
+      setSaving(false);
     }
   }
 
-  function deleteTask(task) {
-    if (!window.confirm(`Delete ${getTaskTitle(task)}?`)) return;
+  async function addSubtask(payload) {
+    const parentTask = allTasks[Number(payload.parentTaskIndex)];
 
-    const taskId = getTaskId(task);
-    const nextTasks = tasks.filter((item, index) => getTaskId(item, index) !== taskId);
+    if (!parentTask) {
+      toast.error("Select a valid parent task.");
+      return;
+    }
 
-    saveProjectWithTasks(nextTasks, "Task deleted.");
+    const taskId = getTaskId(parentTask, Number(payload.parentTaskIndex));
+
+    if (!parentTask?.id && !parentTask?.taskId && !parentTask?.task_id) {
+      toast.error("Parent task is not saved in database yet.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await apiPost("/subtasks", {
+        task_id: taskId,
+        title: payload.title,
+        status: "Pending",
+      });
+
+      toast.success("Subtask added.");
+      setSubtaskModalOpen(false);
+      await loadData();
+    } catch (error) {
+      console.error("Add subtask error:", error);
+      toast.error(error?.message || "Failed to save subtask.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteTask(task, index) {
+    const taskId = getTaskId(task, index);
+
+    if (!task?.id && !task?.taskId && !task?.task_id) {
+      toast.error("This task is not saved in database.");
+      return;
+    }
+
+    const confirmed = window.confirm("Delete this task permanently?");
+
+    if (!confirmed) return;
+
+    setSaving(true);
+
+    try {
+      await apiDelete(`/tasks/${taskId}`);
+      toast.success("Task deleted.");
+      await loadData();
+    } catch (error) {
+      console.error("Delete task error:", error);
+      toast.error(error?.message || "Failed to delete task.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (loading) {
     return (
       <main className="page-shell">
         <div className="mobile-frame">
-          <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center font-black text-slate-500">
-            Loading project details...
+          <div className="rounded-xl border border-slate-200 bg-white px-5 py-8 text-sm font-semibold text-slate-500">
+            Loading project...
           </div>
         </div>
       </main>
@@ -1011,15 +1019,8 @@ export default function ProjectDetails() {
     return (
       <main className="page-shell">
         <div className="mobile-frame">
-          <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center">
-            <h2 className="text-2xl font-black text-[#061638]">Project not found</h2>
-            <button
-              type="button"
-              onClick={() => navigate("/admin/projects")}
-              className="mt-5 rounded-xl bg-[#FF6B35] px-5 py-3 text-sm font-black text-white"
-            >
-              Back to Projects
-            </button>
+          <div className="rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm font-semibold text-slate-500">
+            Project not found.
           </div>
         </div>
       </main>
@@ -1029,130 +1030,103 @@ export default function ProjectDetails() {
   return (
     <main className="page-shell">
       <div className="mobile-frame space-y-5">
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0">
-              <button
-                type="button"
-                onClick={() => navigate("/admin/projects")}
-                className="mb-5 inline-flex items-center gap-2 text-sm font-black text-[#FF6B35]"
-              >
-                <ArrowLeft size={18} />
-                Back to Projects
-              </button>
-
-              <h1 className="text-[34px] font-black leading-tight text-[#061638]">
-                {getProjectName(project)}
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h1 className="text-3xl font-black leading-tight text-[#061638]">
+                {getProjectName(project, Number(projectId) - 1)}
               </h1>
 
-              <p className="mt-2 max-w-3xl text-sm font-semibold text-slate-500">
+              <p className="mt-2 max-w-[760px] text-sm font-semibold leading-6 text-slate-500">
                 {getProjectDescription(project)}
               </p>
 
               <div className="mt-5 flex flex-wrap gap-2">
-                <span
-                  className={`rounded-full border px-3 py-1 text-xs font-black uppercase ${statusClass(
-                    getProjectStatus(project)
-                  )}`}
-                >
-                  {formatStatus(getProjectStatus(project))}
+                <span className="rounded-full bg-blue-50 px-4 py-2 text-xs font-black uppercase text-blue-600">
+                  {getProjectStatus(project)}
                 </span>
 
-                <span className="rounded-full border border-orange-100 bg-orange-50 px-3 py-1 text-xs font-black uppercase text-[#FF6B35]">
+                <span className="rounded-full bg-orange-50 px-4 py-2 text-xs font-black uppercase text-[#FF6B35]">
                   {getProjectDepartment(project)}
                 </span>
 
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-black uppercase text-slate-600">
-                  {formatDate(getProjectStartDate(project))} to{" "}
-                  {formatDate(getProjectEndDate(project))}
+                <span className="rounded-full bg-slate-50 px-4 py-2 text-xs font-black uppercase text-slate-600">
+                  {getTimeline(project)}
                 </span>
               </div>
             </div>
 
-            <div className="flex shrink-0 flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => updateProjectStatus("on_hold")}
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-yellow-200 bg-yellow-50 px-5 text-sm font-black text-yellow-700 transition hover:bg-yellow-100"
-              >
-                <PauseCircle size={18} />
-                Put On Hold
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (window.confirm("Abort this project?")) {
-                    updateProjectStatus("aborted");
-                  }
-                }}
-                className="inline-flex h-12 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-5 text-sm font-black text-red-700 transition hover:bg-red-100"
-              >
-                <XCircle size={18} />
-                Abort Project
-              </button>
+            <div className="rounded-2xl border border-orange-100 bg-orange-50 px-5 py-4 text-center">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-[#FF6B35]">
+                Project Progress
+              </p>
+              <p className="mt-2 text-4xl font-black text-[#061638]">
+                {getProjectProgress(project)}%
+              </p>
             </div>
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-5 flex items-start gap-3">
-            <UsersRound size={28} className="mt-1 text-[#061638]" />
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
+          <div className="flex items-start gap-3">
+            <UsersRound size={30} className="mt-1 text-[#061638]" />
+
             <div>
-              <h2 className="text-[25px] font-black text-[#061638]">
+              <h2 className="text-2xl font-black text-[#061638]">
                 Project Users
               </h2>
-              <p className="text-sm font-medium text-slate-500">
+
+              <p className="mt-1 text-sm font-semibold text-slate-500">
                 View all users assigned to this project.
               </p>
             </div>
           </div>
 
-          <div className="flex gap-3 overflow-x-auto pb-2">
+          <div className="mt-5 flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={() => setSelectedUserId("all")}
-              className={`min-w-[135px] rounded-xl border px-5 py-4 text-left transition hover:border-[#FF6B35] hover:bg-orange-50 ${
-                selectedUserId === "all"
+              onClick={() => setSelectedMemberId("all")}
+              className={`min-w-[135px] rounded-xl border px-5 py-4 text-left transition ${
+                selectedMemberId === "all"
                   ? "border-[#FF6B35] bg-orange-50"
-                  : "border-slate-200 bg-white"
+                  : "border-slate-200 bg-white hover:border-[#FF6B35]"
               }`}
             >
-              <p className="text-sm font-black text-[#061638]">All Users</p>
-              <p className="mt-3 text-sm font-medium text-slate-500">
-                {tasks.length} tasks
+              <p className="font-black text-[#061638]">All Users</p>
+              <p className="mt-2 text-sm font-semibold text-slate-500">
+                {allTasks.length} tasks
               </p>
             </button>
 
-            {teamMembers.length ? (
-              teamMembers.map((member) => {
-                const memberId = String(member.id || member.email || member.name);
-                const userTasks = tasks.filter((task) =>
-                  isTaskForMember(task, member, teamMembers)
+            {assignedEmployees.length ? (
+              assignedEmployees.map((employee, index) => {
+                const id = getUserId(employee) || `employee-${index}`;
+                const employeeTasks = allTasks.filter((task) =>
+                  taskMatchesMember(task, employee)
                 );
 
                 return (
                   <button
-                    key={memberId}
+                    key={id}
                     type="button"
-                    onClick={() => setSelectedUserId(memberId)}
-                    className={`min-w-[190px] rounded-xl border px-5 py-4 text-left transition hover:border-[#FF6B35] hover:bg-orange-50 ${
-                      selectedUserId === memberId
+                    onClick={() => setSelectedMemberId(id)}
+                    className={`min-w-[240px] rounded-xl border px-5 py-4 text-left transition ${
+                      selectedMemberId === id
                         ? "border-[#FF6B35] bg-orange-50"
-                        : "border-slate-200 bg-white"
+                        : "border-slate-200 bg-white hover:border-[#FF6B35]"
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#FF6B35] text-xs font-black text-white">
-                        {getInitials(getUserName(member))}
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#FF6B35] text-xs font-black text-white">
+                        {getInitials(getUserName(employee))}
                       </div>
 
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-black text-[#061638]">
-                          {getUserName(member)}
+                        <p className="truncate font-black text-[#061638]">
+                          {getUserName(employee)}
                         </p>
-                        <p className="mt-1 truncate text-sm font-medium text-slate-500">
-                          {getUserRole(member)} • {userTasks.length} tasks
+                        <p className="truncate text-sm font-semibold text-slate-500">
+                          {getUserRole(employee)} • {employeeTasks.length} tasks
                         </p>
                       </div>
                     </div>
@@ -1160,31 +1134,30 @@ export default function ProjectDetails() {
                 );
               })
             ) : (
-              <div className="min-w-[220px] rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-4 text-sm font-semibold text-slate-500">
-                No real team members assigned.
+              <div className="rounded-xl border border-dashed border-slate-200 px-5 py-4 text-sm font-semibold text-slate-500">
+                No employees assigned.
               </div>
             )}
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-4 border-b border-slate-100 px-6 py-5 lg:flex-row lg:items-start lg:justify-between">
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
+          <div className="grid gap-4 border-b border-slate-100 p-6 xl:grid-cols-[1fr_auto] xl:items-start">
             <div>
-              <h2 className="text-[25px] font-black text-[#061638]">
+              <h2 className="text-2xl font-black text-[#061638]">
                 Project Tasks
               </h2>
-              <p className="mt-1 text-sm font-medium text-slate-500">
-                {selectedMember
-                  ? `Showing tasks assigned to ${getUserName(selectedMember)}.`
-                  : "View tasks, update status, and track subtasks for this project."}
+
+              <p className="mt-2 max-w-[380px] text-sm font-semibold leading-6 text-slate-500">
+                View tasks, update status, and track subtasks for this project.
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-3">
+            <div className="flex min-w-max items-center justify-end gap-3 overflow-x-auto">
               <button
                 type="button"
-                onClick={openAddTask}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-5 text-sm font-black text-[#061638] transition hover:border-[#FF6B35] hover:text-[#FF6B35]"
+                onClick={() => setTaskModalOpen(true)}
+                className="flex h-11 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 text-sm font-black text-[#061638] transition hover:border-[#FF6B35] hover:text-[#FF6B35]"
               >
                 <Plus size={18} />
                 Add Task
@@ -1192,473 +1165,684 @@ export default function ProjectDetails() {
 
               <button
                 type="button"
-                onClick={() => openAddSubTask()}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-5 text-sm font-black text-[#061638] transition hover:border-[#FF6B35] hover:text-[#FF6B35]"
+                onClick={() => setSubtaskModalOpen(true)}
+                className="flex h-11 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 text-sm font-black text-[#061638] transition hover:border-[#FF6B35] hover:text-[#FF6B35]"
               >
                 <Plus size={18} />
                 Add Sub Task
               </button>
 
-              <span className="inline-flex h-11 items-center justify-center rounded-xl border border-orange-200 bg-orange-50 px-5 text-sm font-black text-[#FF6B35]">
-                Status: {taskStats.status}
-              </span>
+              <div className="flex h-11 shrink-0 items-center rounded-xl border border-orange-200 bg-orange-50 px-5 text-sm font-black text-[#FF6B35]">
+                Status: {getProjectComputedStatus({ ...project, tasks: visibleTasks })}
+              </div>
 
               <button
                 type="button"
-                onClick={() => setActiveModal("progress")}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#FF6B35] px-5 text-sm font-black text-white transition hover:opacity-90"
+                onClick={() => setShowProgress((current) => !current)}
+                className="flex h-11 shrink-0 items-center gap-2 rounded-xl bg-[#FF6B35] px-6 text-sm font-black text-white shadow-[0_10px_24px_rgba(255,107,53,0.25)] transition hover:opacity-90"
               >
-                <ListChecks size={18} />
-                Show Progress
+                <BarChart3 size={18} />
+                {showProgress ? "Hide Progress" : "Show Progress"}
               </button>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1050px] text-left text-sm">
-              <thead className="bg-slate-50">
-                <tr className="text-xs uppercase tracking-[0.14em] text-slate-500">
-                  <th className="px-5 py-4">Task</th>
-                  <th className="px-5 py-4">Assigned To</th>
-                  <th className="px-5 py-4">Status</th>
-                  <th className="px-5 py-4">Priority</th>
-                  <th className="px-5 py-4">Timeline</th>
-                  <th className="px-5 py-4">Subtasks</th>
-                  <th className="px-5 py-4">Actions</th>
-                </tr>
-              </thead>
+          {showProgress ? (
+            <ProgressSection
+              tasks={visibleTasks}
+              users={users}
+              progress={progressPercent}
+              stats={taskStats}
+            />
+          ) : null}
 
-              <tbody>
-                {visibleTasks.length ? (
-                  visibleTasks.map((task, index) => {
-                    const subtasks = getTaskSubtasks(task);
-
-                    return (
-                      <tr
-                        key={getTaskId(task, index)}
-                        className="border-t border-slate-100 align-top transition hover:bg-orange-50/40"
-                      >
-                        <td className="px-5 py-5">
-                          <p className="font-black text-[#061638]">
-                            {getTaskTitle(task)}
-                          </p>
-                          <p className="mt-1 max-w-[240px] text-sm font-medium text-slate-500">
-                            {getTaskDescription(task) || "No description"}
-                          </p>
-                        </td>
-
-                        <td className="px-5 py-5 font-black text-[#061638]">
-                          {getTaskAssignedName(task, usersMap, teamMembers)}
-                        </td>
-
-                        <td className="px-5 py-5">
-                          <select
-                            value={normalizeStatus(getTaskStatus(task))}
-                            onChange={(event) =>
-                              updateTaskStatus(task, event.target.value)
-                            }
-                            className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black text-[#061638] outline-none focus:border-[#FF6B35]"
-                          >
-                            <option value="pending">Pending</option>
-                            <option value="in_progress">In Progress</option>
-                            <option value="completed">Completed</option>
-                            <option value="on_hold">On Hold</option>
-                          </select>
-                        </td>
-
-                        <td
-                          className={`px-5 py-5 font-black ${priorityClass(
-                            getTaskPriority(task)
-                          )}`}
-                        >
-                          {formatStatus(getTaskPriority(task))}
-                        </td>
-
-                        <td className="px-5 py-5 font-semibold text-slate-500">
-                          {formatDate(getTaskStartDate(task))} <br />
-                          to {formatDate(getTaskEndDate(task))}
-                        </td>
-
-                        <td className="px-5 py-5">
-                          {subtasks.length ? (
-                            <div className="space-y-2">
-                              {subtasks.map((subtask, subtaskIndex) => (
-                                <div
-                                  key={subtask.id || subtask._id || subtaskIndex}
-                                  className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2"
-                                >
-                                  <p className="font-black text-[#061638]">
-                                    {getSubtaskTitle(subtask, subtaskIndex)}
-                                  </p>
-
-                                  <select
-                                    value={normalizeStatus(subtask.status)}
-                                    onChange={(event) =>
-                                      updateSubTaskStatus(
-                                        task,
-                                        subtaskIndex,
-                                        event.target.value
-                                      )
-                                    }
-                                    className="mt-2 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-[#061638] outline-none focus:border-[#FF6B35]"
-                                  >
-                                    <option value="pending">Pending</option>
-                                    <option value="in_progress">In Progress</option>
-                                    <option value="completed">Completed</option>
-                                    <option value="on_hold">On Hold</option>
-                                  </select>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-sm font-semibold text-slate-400">
-                              No subtasks
-                            </span>
-                          )}
-                        </td>
-
-                        <td className="px-5 py-5">
-                          <div className="flex flex-nowrap gap-2 whitespace-nowrap">
-                            <button
-                              type="button"
-                              onClick={() => openAddSubTask(task)}
-                              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-black text-[#061638] transition hover:border-[#FF6B35] hover:text-[#FF6B35]"
-                            >
-                              <Plus size={15} />
-                              Add Subtask
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => deleteTask(task)}
-                              className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-red-100 bg-white px-3 text-xs font-black text-red-600 transition hover:bg-red-50"
-                            >
-                              <Trash2 size={15} />
-                              Delete
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td
-                      colSpan={7}
-                      className="px-5 py-12 text-center text-sm font-semibold text-slate-500"
-                    >
-                      No tasks found for this selection.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <TaskTable
+            tasks={visibleTasks}
+            allTasks={allTasks}
+            users={users}
+            onStatusChange={handleTaskStatusChange}
+            onDelete={deleteTask}
+          />
         </section>
       </div>
 
-      {activeModal === "task" ? (
-        <Modal title="Add Task" onClose={() => setActiveModal("")}>
-          <form onSubmit={submitTask} className="grid gap-4">
-            <label>
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                Task Title
-              </span>
-              <input
-                value={taskForm.title}
-                onChange={(event) =>
-                  setTaskForm((current) => ({
-                    ...current,
-                    title: event.target.value,
-                  }))
-                }
-                className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-[#FF6B35]"
-                placeholder="Enter task title"
-              />
-            </label>
-
-            <label>
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                Assigned To
-              </span>
-              <select
-                value={taskForm.assignedTo}
-                onChange={(event) =>
-                  setTaskForm((current) => ({
-                    ...current,
-                    assignedTo: event.target.value,
-                  }))
-                }
-                className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-[#FF6B35]"
-              >
-                <option value="">Select member</option>
-                {teamMembers.map((member) => (
-                  <option
-                    key={member.id || member.email || member.name}
-                    value={member.id || member.email || member.name}
-                  >
-                    {getUserName(member)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label>
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                  Status
-                </span>
-                <select
-                  value={taskForm.status}
-                  onChange={(event) =>
-                    setTaskForm((current) => ({
-                      ...current,
-                      status: event.target.value,
-                    }))
-                  }
-                  className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-[#FF6B35]"
-                >
-                  <option value="pending">Pending</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="completed">Completed</option>
-                  <option value="on_hold">On Hold</option>
-                </select>
-              </label>
-
-              <label>
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                  Priority
-                </span>
-                <select
-                  value={taskForm.priority}
-                  onChange={(event) =>
-                    setTaskForm((current) => ({
-                      ...current,
-                      priority: event.target.value,
-                    }))
-                  }
-                  className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-[#FF6B35]"
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="critical">Critical</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label>
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                  Start Date
-                </span>
-                <input
-                  type="date"
-                  value={taskForm.startDate}
-                  onChange={(event) =>
-                    setTaskForm((current) => ({
-                      ...current,
-                      startDate: event.target.value,
-                    }))
-                  }
-                  className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-[#FF6B35]"
-                />
-              </label>
-
-              <label>
-                <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                  End Date
-                </span>
-                <input
-                  type="date"
-                  value={taskForm.endDate}
-                  onChange={(event) =>
-                    setTaskForm((current) => ({
-                      ...current,
-                      endDate: event.target.value,
-                    }))
-                  }
-                  className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-[#FF6B35]"
-                />
-              </label>
-            </div>
-
-            <label>
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                Description
-              </span>
-              <textarea
-                value={taskForm.description}
-                onChange={(event) =>
-                  setTaskForm((current) => ({
-                    ...current,
-                    description: event.target.value,
-                  }))
-                }
-                rows={3}
-                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm font-bold outline-none focus:border-[#FF6B35]"
-                placeholder="Task description"
-              />
-            </label>
-
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setActiveModal("")}
-                className="h-11 rounded-xl border border-slate-200 bg-white px-5 text-sm font-black text-[#061638]"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="submit"
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#FF6B35] px-5 text-sm font-black text-white"
-              >
-                <Save size={17} />
-                Save Task
-              </button>
-            </div>
-          </form>
-        </Modal>
+      {taskModalOpen ? (
+        <TaskModal
+          users={users}
+          onClose={() => setTaskModalOpen(false)}
+          onSave={addTask}
+        />
       ) : null}
 
-      {activeModal === "subtask" ? (
-        <Modal title="Add Sub Task" onClose={() => setActiveModal("")}>
-          <form onSubmit={submitSubTask} className="grid gap-4">
-            <label>
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                Parent Task
-              </span>
-              <select
-                value={selectedTask ? getTaskId(selectedTask) : ""}
-                onChange={(event) => {
-                  const foundTask = tasks.find(
-                    (task, index) => getTaskId(task, index) === event.target.value
-                  );
-
-                  setSelectedTask(foundTask || null);
-                }}
-                className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-[#FF6B35]"
-              >
-                <option value="">Select task</option>
-                {visibleTasks.map((task, index) => (
-                  <option key={getTaskId(task, index)} value={getTaskId(task, index)}>
-                    {getTaskTitle(task)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                Sub Task Title
-              </span>
-              <input
-                value={subTaskForm.title}
-                onChange={(event) =>
-                  setSubTaskForm((current) => ({
-                    ...current,
-                    title: event.target.value,
-                  }))
-                }
-                className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-[#FF6B35]"
-                placeholder="Enter sub task title"
-              />
-            </label>
-
-            <label>
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                Status
-              </span>
-              <select
-                value={subTaskForm.status}
-                onChange={(event) =>
-                  setSubTaskForm((current) => ({
-                    ...current,
-                    status: event.target.value,
-                  }))
-                }
-                className="h-11 w-full rounded-xl border border-slate-200 px-4 text-sm font-bold outline-none focus:border-[#FF6B35]"
-              >
-                <option value="pending">Pending</option>
-                <option value="in_progress">In Progress</option>
-                <option value="completed">Completed</option>
-                <option value="on_hold">On Hold</option>
-              </select>
-            </label>
-
-            <div className="flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => setActiveModal("")}
-                className="h-11 rounded-xl border border-slate-200 bg-white px-5 text-sm font-black text-[#061638]"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="submit"
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#FF6B35] px-5 text-sm font-black text-white"
-              >
-                <Save size={17} />
-                Save Sub Task
-              </button>
-            </div>
-          </form>
-        </Modal>
+      {subtaskModalOpen ? (
+        <SubtaskModal
+          tasks={allTasks}
+          onClose={() => setSubtaskModalOpen(false)}
+          onSave={addSubtask}
+        />
       ) : null}
 
-      {activeModal === "progress" ? (
-        <Modal title="Project Progress" onClose={() => setActiveModal("")}>
-          <div>
-            <div className="mb-5 grid gap-4 sm:grid-cols-3">
-              <div className="rounded-xl bg-orange-50 p-4">
-                <p className="text-xs font-black uppercase tracking-[0.12em] text-[#FF6B35]">
-                  Total Tasks
-                </p>
-                <p className="mt-3 text-3xl font-black text-[#061638]">
-                  {taskStats.total}
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-emerald-50 p-4">
-                <p className="text-xs font-black uppercase tracking-[0.12em] text-emerald-600">
-                  Completed
-                </p>
-                <p className="mt-3 text-3xl font-black text-[#061638]">
-                  {taskStats.completed}
-                </p>
-              </div>
-
-              <div className="rounded-xl bg-blue-50 p-4">
-                <p className="text-xs font-black uppercase tracking-[0.12em] text-blue-600">
-                  Progress
-                </p>
-                <p className="mt-3 text-3xl font-black text-[#061638]">
-                  {taskStats.progress}%
-                </p>
-              </div>
-            </div>
-
-            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className="h-full rounded-full bg-[#FF6B35]"
-                style={{ width: `${taskStats.progress}%` }}
-              />
-            </div>
-
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setActiveModal("")}
-                className="h-11 rounded-xl bg-[#FF6B35] px-5 text-sm font-black text-white"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </Modal>
+      {saving ? (
+        <div className="fixed bottom-5 right-5 z-[999] rounded-full bg-[#061638] px-4 py-2 text-sm font-black text-white shadow-lg">
+          Saving...
+        </div>
       ) : null}
     </main>
+  );
+}
+
+function TaskTable({ tasks, allTasks, users, onStatusChange, onDelete }) {
+  if (!tasks.length) {
+    return (
+      <div>
+        <div className="grid grid-cols-[1.2fr_1fr_0.9fr_0.8fr_1fr_1fr_0.8fr] bg-slate-50 px-5 py-4 text-xs font-black uppercase tracking-[0.14em] text-slate-500">
+          <span>Task</span>
+          <span>Assigned To</span>
+          <span>Status</span>
+          <span>Priority</span>
+          <span>Timeline</span>
+          <span>Subtasks</span>
+          <span>Actions</span>
+        </div>
+
+        <div className="px-5 py-12 text-center text-sm font-semibold text-slate-500">
+          No tasks found for this selection.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[1050px] text-left text-sm">
+        <thead>
+          <tr className="border-y border-slate-100 bg-slate-50 text-xs uppercase tracking-[0.14em] text-slate-500">
+            <th className="px-5 py-4">Task</th>
+            <th className="px-5 py-4">Assigned To</th>
+            <th className="px-5 py-4">Status</th>
+            <th className="px-5 py-4">Priority</th>
+            <th className="px-5 py-4">Timeline</th>
+            <th className="px-5 py-4">Subtasks</th>
+            <th className="px-5 py-4">Actions</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {tasks.map((task, visibleIndex) => {
+            const actualIndex = allTasks.findIndex(
+              (item) => getTaskId(item) === getTaskId(task)
+            );
+            const assigned = getAssignedEmployeeForTask(task, users);
+            const subtasks = getTaskSubtasks(task);
+
+            return (
+              <tr
+                key={getTaskId(task, visibleIndex)}
+                className="border-b border-slate-100 bg-white"
+              >
+                <td className="px-5 py-5 align-top">
+                  <p className="font-black text-[#061638]">
+                    {getTaskName(task, visibleIndex)}
+                  </p>
+
+                  {getTaskDescription(task) ? (
+                    <p className="mt-1 text-sm font-semibold text-slate-500">
+                      {getTaskDescription(task)}
+                    </p>
+                  ) : null}
+                </td>
+
+                <td className="px-5 py-5 align-top font-black text-[#061638]">
+                  {assigned ? getUserName(assigned) : "Unassigned"}
+                </td>
+
+                <td className="px-5 py-5 align-top">
+                  <select
+                    value={getTaskStatus(task)}
+                    onChange={(event) =>
+                      onStatusChange(actualIndex, event.target.value)
+                    }
+                    className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black text-[#061638] outline-none focus:border-[#FF6B35]"
+                  >
+                    <option value="pending">Pending</option>
+                    <option value="in progress">In Progress</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </td>
+
+                <td className="px-5 py-5 align-top font-black text-[#061638]">
+                  {getTaskPriority(task)}
+                </td>
+
+                <td className="px-5 py-5 align-top font-semibold leading-6 text-slate-600">
+                  {getTaskTimeline(task)}
+                </td>
+
+                <td className="px-5 py-5 align-top">
+                  {subtasks.length ? (
+                    <div className="space-y-2">
+                      {subtasks.map((subtask, index) => (
+                        <div
+                          key={subtask?.id || index}
+                          className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                        >
+                          <p className="font-black text-[#061638]">
+                            {subtask?.title ||
+                              subtask?.name ||
+                              subtask?.taskName ||
+                              `Subtask ${index + 1}`}
+                          </p>
+                          <p className="mt-1 text-xs font-semibold text-slate-500">
+                            {subtask?.status || "Pending"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-sm font-semibold text-slate-400">
+                      No subtasks
+                    </span>
+                  )}
+                </td>
+
+                <td className="px-5 py-5 align-top">
+                  <button
+                    type="button"
+                    onClick={() => onDelete(task, actualIndex)}
+                    className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-[#061638] transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                  >
+                    <Trash2 size={16} />
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ProgressSection({ tasks, users, progress, stats }) {
+  return (
+    <div className="border-b border-slate-100 bg-white p-6">
+      <div className="grid gap-4 xl:grid-cols-[1fr_1.2fr]">
+        <StatusProgressBar progress={progress} stats={stats} />
+        <GanttChart tasks={tasks} users={users} />
+      </div>
+
+      <KanbanBoard tasks={tasks} users={users} />
+    </div>
+  );
+}
+
+function StatusProgressBar({ progress, stats }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+      <div className="mb-4 flex items-center gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-100 text-[#FF6B35]">
+          <BarChart3 size={20} />
+        </div>
+
+        <div>
+          <h3 className="text-lg font-black text-[#061638]">Status Bar</h3>
+          <p className="text-sm font-semibold text-slate-500">
+            Overall task completion status.
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-3 flex items-end justify-between">
+        <span className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">
+          Progress
+        </span>
+
+        <span className="text-3xl font-black text-[#061638]">{progress}%</span>
+      </div>
+
+      <div className="h-4 overflow-hidden rounded-full bg-slate-200">
+        <div
+          className="h-full rounded-full bg-[#FF6B35] transition-all"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+
+      <div className="mt-5 grid grid-cols-4 gap-3">
+        <MiniStat label="Total" value={stats.total} />
+        <MiniStat label="Done" value={stats.completed} />
+        <MiniStat label="Progress" value={stats.inProgress} />
+        <MiniStat label="Pending" value={stats.pending} />
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3 text-center">
+      <p className="text-xl font-black text-[#061638]">{value}</p>
+      <p className="mt-1 text-xs font-black uppercase tracking-[0.1em] text-slate-500">
+        {label}
+      </p>
+    </div>
+  );
+}
+
+function GanttChart({ tasks, users }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+      <div className="mb-4 flex items-center gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-100 text-blue-600">
+          <CalendarDays size={20} />
+        </div>
+
+        <div>
+          <h3 className="text-lg font-black text-[#061638]">Gantt Chart</h3>
+          <p className="text-sm font-semibold text-slate-500">
+            Timeline view of project tasks.
+          </p>
+        </div>
+      </div>
+
+      {tasks.length ? (
+        <div className="space-y-3">
+          {tasks.map((task, index) => {
+            const assigned = getAssignedEmployeeForTask(task, users);
+            const width = isTaskComplete(task) ? 100 : isTaskInProgress(task) ? 60 : 28;
+
+            return (
+              <div key={getTaskId(task, index)}>
+                <div className="mb-1 flex items-center justify-between gap-3 text-xs font-black text-slate-500">
+                  <span className="truncate">
+                    {getTaskName(task, index)}
+                    {assigned ? ` • ${getUserName(assigned)}` : ""}
+                  </span>
+                  <span>{getTaskTimeline(task)}</span>
+                </div>
+
+                <div className="h-8 overflow-hidden rounded-xl bg-white">
+                  <div
+                    className="flex h-full items-center rounded-xl bg-[#FF6B35] px-3 text-xs font-black text-white"
+                    style={{ width: `${width}%` }}
+                  >
+                    {getPrettyTaskStatus(task)}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
+          No tasks available for Gantt chart.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KanbanBoard({ tasks, users }) {
+  const columns = [
+    {
+      key: "pending",
+      title: "Pending",
+      icon: Clock3,
+      items: tasks.filter((task) => !isTaskComplete(task) && !isTaskInProgress(task)),
+    },
+    {
+      key: "in-progress",
+      title: "In Progress",
+      icon: ListChecks,
+      items: tasks.filter(isTaskInProgress),
+    },
+    {
+      key: "completed",
+      title: "Completed",
+      icon: CheckCircle2,
+      items: tasks.filter(isTaskComplete),
+    },
+  ];
+
+  return (
+    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-5">
+      <div className="mb-4 flex items-center gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-green-100 text-green-600">
+          <Columns3 size={20} />
+        </div>
+
+        <div>
+          <h3 className="text-lg font-black text-[#061638]">Kanban</h3>
+          <p className="text-sm font-semibold text-slate-500">
+            Task board based on current status.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        {columns.map((column) => {
+          const Icon = column.icon;
+
+          return (
+            <div
+              key={column.key}
+              className="min-h-[210px] rounded-2xl border border-slate-200 bg-white p-4"
+            >
+              <div className="mb-4 flex items-center justify-between">
+                <h4 className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.12em] text-[#061638]">
+                  <Icon size={16} />
+                  {column.title}
+                </h4>
+
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-500">
+                  {column.items.length}
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {column.items.length ? (
+                  column.items.map((task, index) => {
+                    const assigned = getAssignedEmployeeForTask(task, users);
+
+                    return (
+                      <div
+                        key={getTaskId(task, index)}
+                        className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+                      >
+                        <p className="font-black text-[#061638]">
+                          {getTaskName(task, index)}
+                        </p>
+
+                        <p className="mt-2 text-xs font-semibold text-slate-500">
+                          {assigned ? getUserName(assigned) : "Unassigned"}
+                        </p>
+
+                        <div className="mt-3 flex items-center justify-between text-xs font-black text-slate-500">
+                          <span>{getTaskPriority(task)}</span>
+                          <span>{formatDate(getTaskEndDate(task))}</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm font-semibold text-slate-400">
+                    No tasks
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TaskModal({ users, onClose, onSave }) {
+  const [form, setForm] = useState({
+    title: "",
+    description: "",
+    assignedToId: "",
+    status: "Pending",
+    priority: "High",
+    startDate: "",
+    endDate: "",
+  });
+
+  function updateField(name, value) {
+    setForm((current) => ({
+      ...current,
+      [name]: value,
+    }));
+  }
+
+  function submit(event) {
+    event.preventDefault();
+
+    if (!form.title.trim()) {
+      toast.error("Task name is required.");
+      return;
+    }
+
+    if (!form.assignedToId) {
+      toast.error("Select employee before assigning task.");
+      return;
+    }
+
+    const assignedUser = users.find(
+      (user) => String(getUserId(user)) === String(form.assignedToId)
+    );
+
+    onSave({
+      title: form.title.trim(),
+      name: form.title.trim(),
+      description: form.description.trim(),
+
+      assignedToId: form.assignedToId,
+      assigned_to: form.assignedToId,
+      assignedTo: form.assignedToId,
+
+      assignedUser: assignedUser
+        ? {
+            id: getUserId(assignedUser),
+            name: getUserName(assignedUser),
+            email: getUserEmail(assignedUser),
+            department: getUserDepartment(assignedUser),
+          }
+        : null,
+
+      status: form.status,
+      priority: form.priority,
+      startDate: form.startDate,
+      endDate: form.endDate,
+      dueDate: form.endDate,
+    });
+  }
+
+  return (
+    <Modal title="Add Task" onClose={onClose}>
+      <form onSubmit={submit} className="grid gap-4">
+        <label>
+          <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+            Task Name
+          </span>
+
+          <input
+            value={form.title}
+            onChange={(event) => updateField("title", event.target.value)}
+            placeholder="Task name"
+            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+          />
+        </label>
+
+        <label>
+          <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+            Description
+          </span>
+
+          <textarea
+            value={form.description}
+            onChange={(event) => updateField("description", event.target.value)}
+            rows={3}
+            placeholder="Task description"
+            className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+          />
+        </label>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <label>
+            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+              Assigned To
+            </span>
+
+            <select
+              value={form.assignedToId}
+              onChange={(event) => updateField("assignedToId", event.target.value)}
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+            >
+              <option value="">Select employee</option>
+              {users.map((user, index) => (
+                <option key={getUserId(user) || index} value={getUserId(user)}>
+                  {getUserName(user)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+              Status
+            </span>
+
+            <select
+              value={form.status}
+              onChange={(event) => updateField("status", event.target.value)}
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+            >
+              <option value="Pending">Pending</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Completed">Completed</option>
+            </select>
+          </label>
+
+          <label>
+            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+              Priority
+            </span>
+
+            <select
+              value={form.priority}
+              onChange={(event) => updateField("priority", event.target.value)}
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+            >
+              <option value="Low">Low</option>
+              <option value="Medium">Medium</option>
+              <option value="High">High</option>
+            </select>
+          </label>
+
+          <label>
+            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+              End Date
+            </span>
+
+            <input
+              type="date"
+              value={form.endDate}
+              onChange={(event) => updateField("endDate", event.target.value)}
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+            />
+          </label>
+        </div>
+
+        <div className="flex justify-end gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-11 rounded-xl border border-slate-200 bg-white px-5 text-sm font-black text-[#061638]"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="submit"
+            className="h-11 rounded-xl bg-[#FF6B35] px-6 text-sm font-black text-white"
+          >
+            Add Task
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function SubtaskModal({ tasks, onClose, onSave }) {
+  const [form, setForm] = useState({
+    parentTaskIndex: "",
+    title: "",
+  });
+
+  function submit(event) {
+    event.preventDefault();
+
+    if (form.parentTaskIndex === "") {
+      toast.error("Select a parent task.");
+      return;
+    }
+
+    if (!form.title.trim()) {
+      toast.error("Subtask name is required.");
+      return;
+    }
+
+    onSave({
+      parentTaskIndex: form.parentTaskIndex,
+      title: form.title.trim(),
+    });
+  }
+
+  return (
+    <Modal title="Add Sub Task" onClose={onClose}>
+      <form onSubmit={submit} className="grid gap-4">
+        <label>
+          <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+            Parent Task
+          </span>
+
+          <select
+            value={form.parentTaskIndex}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                parentTaskIndex: event.target.value,
+              }))
+            }
+            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+          >
+            <option value="">Select task</option>
+            {tasks.map((task, index) => (
+              <option key={getTaskId(task, index)} value={String(index)}>
+                {getTaskName(task, index)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+            Subtask Name
+          </span>
+
+          <input
+            value={form.title}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                title: event.target.value,
+              }))
+            }
+            placeholder="Subtask name"
+            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+          />
+        </label>
+
+        <div className="flex justify-end gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-11 rounded-xl border border-slate-200 bg-white px-5 text-sm font-black text-[#061638]"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="submit"
+            className="h-11 rounded-xl bg-[#FF6B35] px-6 text-sm font-black text-white"
+          >
+            Add Subtask
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }

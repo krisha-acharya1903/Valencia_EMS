@@ -1,3 +1,9 @@
+import jayMoreRoutes from "./routes/jayMoreRoutes.js";
+import employeeProjectBoardRoutes from "./routes/employeeProjectBoardRoutes.js";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 import createAccountAdministratorRoutes from "./routes/accountAdministratorRoutes.cjs";
 import express from "express";
 import cors from "cors";
@@ -9,6 +15,21 @@ import { db } from "./database.js";
 dotenv.config();
 
 const app = express();
+console.log("✅ THIS IS THE SERVER.JS I AM RUNNING");
+
+app.get("/api/employee/submission-route-test", (req, res) => {
+  res.json({
+    success: true,
+    message: "Direct test route from server.js is working.",
+  });
+});
+
+app.get("/api/employee-direct-test", (req, res) => {
+  res.json({
+    success: true,
+    message: "Correct backend server.js is running.",
+  });
+});
 
 app.use(
   cors({
@@ -23,6 +44,84 @@ app.use(
 );
 
 app.use(express.json());
+
+
+app.use("/api/jay-more", jayMoreRoutes);
+app.use("/api/employee", employeeProjectBoardRoutes);
+
+app.get("/api/direct-test", (req, res) => {
+  res.json({
+    success: true,
+    message: "This server.js is the running backend file.",
+  });
+});
+app.use(express.static("public"));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const LEAVE_UPLOAD_DIR = path.join(__dirname, "uploads", "leave-attachments");
+
+fs.mkdirSync(LEAVE_UPLOAD_DIR, { recursive: true });
+
+const ALLOWED_LEAVE_FILE_TYPES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+
+const leaveAttachmentStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, LEAVE_UPLOAD_DIR);
+  },
+  filename: (req, file, cb) => {
+    const safeOriginal = String(file.originalname || "attachment")
+      .replace(/[^\w.\-() ]+/g, "_")
+      .replace(/\s+/g, "_");
+
+    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}-${safeOriginal}`);
+  },
+});
+
+const leaveUpload = multer({
+  storage: leaveAttachmentStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    if (!ALLOWED_LEAVE_FILE_TYPES.has(file.mimetype)) {
+      cb(
+        new Error(
+          "Unsupported file type. Please upload PDF, JPG, PNG, DOC, or DOCX."
+        )
+      );
+      return;
+    }
+
+    cb(null, true);
+  },
+});
+
+function uploadLeaveAttachment(req, res, next) {
+  leaveUpload.single("attachment")(req, res, (error) => {
+    if (!error) {
+      next();
+      return;
+    }
+
+    const message =
+      error.code === "LIMIT_FILE_SIZE"
+        ? "Attachment must be 5MB or smaller."
+        : error.message || "Attachment upload failed.";
+
+    res.status(400).json({
+      success: false,
+      message,
+    });
+  });
+}
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_later";
 const MAX_ACTIVE_LOGIN_STRIKES = 3;
@@ -165,6 +264,41 @@ ensureColumn("leave_requests", "end_date", "TEXT");
 ensureColumn("leave_requests", "status", "TEXT DEFAULT 'pending'");
 ensureColumn("leave_requests", "approved_by", "INTEGER");
 ensureColumn("leave_requests", "admin_comment", "TEXT");
+ensureColumn("leave_requests", "attachment_filename", "TEXT");
+ensureColumn("leave_requests", "attachment_original_name", "TEXT");
+ensureColumn("leave_requests", "attachment_path", "TEXT");
+ensureColumn("leave_requests", "attachment_mime_type", "TEXT");
+ensureColumn("leave_requests", "attachment_size", "INTEGER DEFAULT 0");
+ensureColumn("leave_requests", "reviewed_at", "TEXT");
+
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS attendance (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    user_name TEXT,
+    user_email TEXT,
+    department TEXT,
+    type TEXT,
+    status TEXT,
+    date TEXT,
+    check_in TEXT,
+    check_out TEXT,
+    created_at TEXT,
+    updated_at TEXT
+  )
+`).run();
+
+ensureColumn("attendance", "user_id", "INTEGER");
+ensureColumn("attendance", "user_name", "TEXT");
+ensureColumn("attendance", "user_email", "TEXT");
+ensureColumn("attendance", "department", "TEXT");
+ensureColumn("attendance", "type", "TEXT");
+ensureColumn("attendance", "status", "TEXT");
+ensureColumn("attendance", "date", "TEXT");
+ensureColumn("attendance", "check_in", "TEXT");
+ensureColumn("attendance", "check_out", "TEXT");
+ensureColumn("attendance", "created_at", "TEXT");
+ensureColumn("attendance", "updated_at", "TEXT");
 
 db.prepare(`
   CREATE TABLE IF NOT EXISTS app_login_logs (
@@ -276,6 +410,82 @@ ensureColumn("project_time_entries", "status", "TEXT DEFAULT 'submitted'");
 ensureColumn("project_time_entries", "reviewed_by", "INTEGER");
 ensureColumn("project_time_entries", "reviewed_at", "TEXT");
 ensureColumn("project_time_entries", "review_comment", "TEXT");
+
+/* ---------------- REAL EMPLOYEE OVERVIEW / NOTIFICATION / ACTIVITY SCHEMA ---------------- */
+
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    message TEXT DEFAULT '',
+    severity TEXT DEFAULT 'standard',
+    target_type TEXT DEFAULT 'General',
+    role TEXT DEFAULT '',
+    department TEXT DEFAULT '',
+    user_id INTEGER,
+    entity_type TEXT DEFAULT '',
+    entity_id INTEGER,
+    read_at TEXT,
+    created_by INTEGER,
+    created_at TEXT,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+  )
+`).run();
+
+ensureColumn("notifications", "message", "TEXT DEFAULT ''");
+ensureColumn("notifications", "severity", "TEXT DEFAULT 'standard'");
+ensureColumn("notifications", "target_type", "TEXT DEFAULT 'General'");
+ensureColumn("notifications", "role", "TEXT DEFAULT ''");
+ensureColumn("notifications", "department", "TEXT DEFAULT ''");
+ensureColumn("notifications", "user_id", "INTEGER");
+ensureColumn("notifications", "entity_type", "TEXT DEFAULT ''");
+ensureColumn("notifications", "entity_id", "INTEGER");
+ensureColumn("notifications", "read_at", "TEXT");
+ensureColumn("notifications", "created_by", "INTEGER");
+ensureColumn("notifications", "created_at", "TEXT");
+
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS notification_reads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    notification_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    read_at TEXT NOT NULL,
+    UNIQUE(notification_id, user_id),
+    FOREIGN KEY(notification_id) REFERENCES notifications(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  )
+`).run();
+
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS recent_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    role TEXT DEFAULT '',
+    department TEXT DEFAULT '',
+    action_type TEXT DEFAULT 'activity',
+    title TEXT NOT NULL,
+    message TEXT DEFAULT '',
+    entity_type TEXT DEFAULT '',
+    entity_id INTEGER,
+    created_by INTEGER,
+    created_at TEXT,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE SET NULL
+  )
+`).run();
+
+ensureColumn("recent_activity", "user_id", "INTEGER");
+ensureColumn("recent_activity", "role", "TEXT DEFAULT ''");
+ensureColumn("recent_activity", "department", "TEXT DEFAULT ''");
+ensureColumn("recent_activity", "action_type", "TEXT DEFAULT 'activity'");
+ensureColumn("recent_activity", "title", "TEXT");
+ensureColumn("recent_activity", "message", "TEXT DEFAULT ''");
+ensureColumn("recent_activity", "entity_type", "TEXT DEFAULT ''");
+ensureColumn("recent_activity", "entity_id", "INTEGER");
+ensureColumn("recent_activity", "created_by", "INTEGER");
+ensureColumn("recent_activity", "created_at", "TEXT");
+
 
 /* ---------------- USER HELPERS ---------------- */
 
@@ -809,9 +1019,23 @@ function addAttendanceEvent(user, type) {
 
   console.log("Attendance created:", type, user.email, nowIST);
 
-  return db
+  const attendance = db
     .prepare("SELECT * FROM attendance WHERE id = ?")
     .get(result.lastInsertRowid);
+
+  recordEmployeeActivity({
+    userId: user.id,
+    role: user.role || "employee",
+    department: user.department || "",
+    actionType: "attendance_marked",
+    title: "Attendance marked",
+    message: `${type} recorded for ${today}`,
+    entityType: "attendance",
+    entityId: attendance.id,
+    createdBy: user.id,
+  });
+
+  return attendance;
 }
 
 function getLatestAttendanceEvent(userId) {
@@ -1120,6 +1344,1072 @@ function buildProjectHoursSummary({ startDate, endDate, requester }) {
   return summary;
 }
 
+
+/* ---------------- REAL EMPLOYEE OVERVIEW / NOTIFICATION / ACTIVITY HELPERS ---------------- */
+
+function normalizeNotification(row) {
+  if (!row) return null;
+
+  const readAt = row.user_read_at || row.read_at || "";
+
+  return {
+    id: row.id,
+    title: row.title || "",
+    message: row.message || "",
+    severity: row.severity || "standard",
+    targetType: row.target_type || "General",
+    target_type: row.target_type || "General",
+    role: row.role || "",
+    department: row.department || "",
+    userId: row.user_id ? String(row.user_id) : "",
+    user_id: row.user_id || null,
+    entityType: row.entity_type || "",
+    entity_type: row.entity_type || "",
+    entityId: row.entity_id || "",
+    entity_id: row.entity_id || null,
+    createdBy: row.created_by || "",
+    created_by: row.created_by || "",
+    createdAt: row.created_at || "",
+    created_at: row.created_at || "",
+    readAt,
+    read_at: readAt,
+    isRead: Boolean(readAt),
+    unread: !readAt,
+  };
+}
+
+function createNotification({
+  title,
+  message = "",
+  severity = "standard",
+  targetType = "General",
+  role = "",
+  department = "",
+  userId = null,
+  entityType = "",
+  entityId = null,
+  createdBy = null,
+}) {
+  if (!title) return null;
+
+  try {
+    const nowIST = getIndianTimestamp();
+
+    const result = db
+      .prepare(
+        `
+        INSERT INTO notifications (
+          title,
+          message,
+          severity,
+          target_type,
+          role,
+          department,
+          user_id,
+          entity_type,
+          entity_id,
+          created_by,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+      )
+      .run(
+        title,
+        message,
+        severity,
+        targetType,
+        role,
+        department,
+        userId,
+        entityType,
+        entityId,
+        createdBy,
+        nowIST
+      );
+
+    return db
+      .prepare("SELECT * FROM notifications WHERE id = ?")
+      .get(result.lastInsertRowid);
+  } catch (error) {
+    console.error("Create notification error:", error);
+    return null;
+  }
+}
+
+function getNotificationsForUser(user, limit = 50) {
+  if (!user) return [];
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        n.*,
+        nr.read_at AS user_read_at
+      FROM notifications n
+      LEFT JOIN notification_reads nr
+        ON nr.notification_id = n.id
+       AND nr.user_id = ?
+      WHERE
+        LOWER(COALESCE(n.target_type, '')) IN ('general', 'all', 'everyone')
+        OR CAST(COALESCE(n.user_id, '') AS TEXT) = CAST(? AS TEXT)
+        OR (
+          COALESCE(n.department, '') != ''
+          AND LOWER(COALESCE(n.department, '')) = LOWER(?)
+        )
+        OR (
+          COALESCE(n.role, '') != ''
+          AND LOWER(COALESCE(n.role, '')) = LOWER(?)
+        )
+      ORDER BY n.created_at DESC, n.id DESC
+      LIMIT ?
+    `
+    )
+    .all(
+      user.id,
+      user.id,
+      String(user.department || ""),
+      String(user.role || ""),
+      Number(limit || 50)
+    );
+
+  return rows.map(normalizeNotification).filter(Boolean);
+}
+
+function markNotificationRead(notificationId, userId) {
+  const nowIST = getIndianTimestamp();
+
+  db.prepare(
+    `
+    INSERT INTO notification_reads (
+      notification_id,
+      user_id,
+      read_at
+    )
+    VALUES (?, ?, ?)
+    ON CONFLICT(notification_id, user_id)
+    DO UPDATE SET read_at = excluded.read_at
+  `
+  ).run(notificationId, userId, nowIST);
+
+  return nowIST;
+}
+
+function normalizeRecentActivity(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id || `${row.action_type || "activity"}-${row.entity_type || ""}-${row.entity_id || ""}-${row.created_at || ""}`,
+    userId: row.user_id ? String(row.user_id) : "",
+    user_id: row.user_id || null,
+    role: row.role || "",
+    department: row.department || "",
+    actionType: row.action_type || "activity",
+    action_type: row.action_type || "activity",
+    title: row.title || "",
+    message: row.message || "",
+    entityType: row.entity_type || "",
+    entity_type: row.entity_type || "",
+    entityId: row.entity_id || "",
+    entity_id: row.entity_id || null,
+    createdBy: row.created_by || "",
+    created_by: row.created_by || "",
+    createdAt: row.created_at || "",
+    created_at: row.created_at || "",
+  };
+}
+
+function recordEmployeeActivity({
+  userId = null,
+  role = "",
+  department = "",
+  actionType = "activity",
+  title,
+  message = "",
+  entityType = "",
+  entityId = null,
+  createdBy = null,
+}) {
+  if (!title) return null;
+
+  try {
+    const nowIST = getIndianTimestamp();
+
+    const result = db
+      .prepare(
+        `
+        INSERT INTO recent_activity (
+          user_id,
+          role,
+          department,
+          action_type,
+          title,
+          message,
+          entity_type,
+          entity_id,
+          created_by,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+      )
+      .run(
+        userId,
+        role,
+        department,
+        actionType,
+        title,
+        message,
+        entityType,
+        entityId,
+        createdBy,
+        nowIST
+      );
+
+    return db
+      .prepare("SELECT * FROM recent_activity WHERE id = ?")
+      .get(result.lastInsertRowid);
+  } catch (error) {
+    console.error("Record recent activity error:", error);
+    return null;
+  }
+}
+
+function notifyProjectAssignment(project, actor, titleOverride = "") {
+  if (!project) return;
+
+  const members = parseProjectMembers(project.members)
+    .map(normalizeProjectMember)
+    .filter(Boolean);
+
+  const seenUserIds = new Set();
+
+  for (const member of members) {
+    const userId = member.id || member.userId || member.user_id || member.employeeId || member.employee_id;
+
+    if (!userId || seenUserIds.has(String(userId))) continue;
+
+    seenUserIds.add(String(userId));
+
+    createNotification({
+      title: titleOverride || "Project assigned",
+      message: `${actor?.name || "Admin"} assigned you to ${project.name || "a project"}.`,
+      severity: "standard",
+      targetType: "User",
+      userId,
+      department: member.department || project.department || "",
+      entityType: "project",
+      entityId: project.id,
+      createdBy: actor?.id || null,
+    });
+
+    recordEmployeeActivity({
+      userId,
+      role: "employee",
+      department: member.department || project.department || "",
+      actionType: "project_assigned",
+      title: titleOverride || "Project assigned",
+      message: `${project.name || "Project"} was assigned to you.`,
+      entityType: "project",
+      entityId: project.id,
+      createdBy: actor?.id || null,
+    });
+  }
+}
+
+function notifyTaskAssignment(task, actor, titleOverride = "") {
+  if (!task || !task.assigned_to) return;
+
+  const assignee = db
+    .prepare("SELECT id, name, email, department, role FROM users WHERE id = ?")
+    .get(task.assigned_to);
+
+  if (!assignee) return;
+
+  createNotification({
+    title: titleOverride || "Task assigned",
+    message: `${actor?.name || "Admin"} assigned you task: ${task.title || "Untitled task"}.`,
+    severity: "standard",
+    targetType: "User",
+    userId: assignee.id,
+    department: assignee.department || task.department || "",
+    entityType: "task",
+    entityId: task.id,
+    createdBy: actor?.id || null,
+  });
+
+  recordEmployeeActivity({
+    userId: assignee.id,
+    role: "employee",
+    department: assignee.department || task.department || "",
+    actionType: "task_assigned",
+    title: titleOverride || "Task assigned",
+    message: task.title || "A task was assigned to you.",
+    entityType: "task",
+    entityId: task.id,
+    createdBy: actor?.id || null,
+  });
+}
+
+function getWorkingDaysInCurrentMonthTillToday() {
+  const today = getTodayDate();
+  const [year, month, day] = today.split("-").map(Number);
+  let workingDays = 0;
+
+  for (let currentDay = 1; currentDay <= day; currentDay += 1) {
+    const dateString = `${year}-${String(month).padStart(2, "0")}-${String(
+      currentDay
+    ).padStart(2, "0")}`;
+
+    if (isWorkingDate(dateString)) {
+      workingDays += 1;
+    }
+  }
+
+  return workingDays;
+}
+
+function getEmployeeAttendanceSummary(userId) {
+  const today = getTodayDate();
+  const monthStart = `${today.slice(0, 7)}-01`;
+
+  const rows = db
+    .prepare(
+      `
+      SELECT *
+      FROM attendance
+      WHERE user_id = ?
+        AND date >= ?
+        AND date <= ?
+      ORDER BY date DESC, id DESC
+    `
+    )
+    .all(userId, monthStart, today);
+
+  const presentDates = new Set();
+  const lateDates = new Set();
+
+  for (const row of rows) {
+    if (row.type !== "Check In") continue;
+
+    presentDates.add(row.date);
+
+    const timePart = String(row.created_at || "").slice(11, 16);
+    if (timePart && timePart > "10:15") {
+      lateDates.add(row.date);
+    }
+  }
+
+  const workingDays = getWorkingDaysInCurrentMonthTillToday();
+  const present = presentDates.size;
+  const late = lateDates.size;
+  const absent = Math.max(workingDays - present, 0);
+  const latest = getLatestAttendanceEvent(userId);
+
+  return {
+    month: today.slice(0, 7),
+    workingDays,
+    present,
+    absent,
+    late,
+    totalRecords: rows.length,
+    currentStatus: latest?.type === "Check In" ? "checkedIn" : "checkedOut",
+    latestAttendance: latest || null,
+    records: rows,
+  };
+}
+
+function getAssignedTasksForEmployee(userId) {
+  return db
+    .prepare(
+      `
+      SELECT
+        t.*,
+        p.name AS project_name,
+        p.status AS project_status,
+        p.progress AS project_progress
+      FROM tasks t
+      LEFT JOIN projects p ON p.id = t.project_id
+      WHERE CAST(t.assigned_to AS TEXT) = CAST(? AS TEXT)
+      ORDER BY t.created_at DESC, t.id DESC
+    `
+    )
+    .all(userId);
+}
+
+function getAssignedProjectsForEmployee(user) {
+  const projects = db
+    .prepare(
+      `
+      SELECT *
+      FROM projects
+      WHERE COALESCE(status, 'active') != 'deleted'
+      ORDER BY created_at DESC, id DESC
+    `
+    )
+    .all();
+
+  return projects.filter((project) => employeeCanSeeProject(user, project));
+}
+
+function buildEmployeeProjectCards(user) {
+  const projects = getAssignedProjectsForEmployee(user);
+
+  return projects.map((project) => {
+    const tasks = db
+      .prepare(
+        `
+        SELECT *
+        FROM tasks
+        WHERE project_id = ?
+          AND CAST(assigned_to AS TEXT) = CAST(? AS TEXT)
+        ORDER BY created_at DESC, id DESC
+      `
+      )
+      .all(project.id, user.id);
+
+    const totalTasks = tasks.length;
+    const completedTasks = tasks.filter((task) => isDoneStatus(task.status)).length;
+    const progress = totalTasks
+      ? Math.round((completedTasks / totalTasks) * 100)
+      : Number(project.progress || 0);
+
+    return {
+      ...normalizeProject(project),
+      tasks,
+      totalTasks,
+      completedTasks,
+      pendingTasks: Math.max(totalTasks - completedTasks, 0),
+      progress,
+      status:
+        Number(progress) >= 100
+          ? "completed"
+          : String(project.status || "active").toLowerCase(),
+    };
+  });
+}
+
+function buildEmployeeProgress(userId) {
+  const tasks = getAssignedTasksForEmployee(userId);
+  const totalTasks = tasks.length;
+  const completedTasks = tasks.filter((task) => isDoneStatus(task.status)).length;
+  const progress = totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+  return {
+    totalTasks,
+    completedTasks,
+    pendingTasks: Math.max(totalTasks - completedTasks, 0),
+    progress,
+    percentage: progress,
+    tasks,
+  };
+}
+
+function getRecentActivityForUser(user, limit = 20) {
+  const storedRows = db
+    .prepare(
+      `
+      SELECT *
+      FROM recent_activity
+      WHERE CAST(COALESCE(user_id, '') AS TEXT) = CAST(? AS TEXT)
+         OR (
+              COALESCE(department, '') != ''
+              AND LOWER(COALESCE(department, '')) = LOWER(?)
+              AND (
+                COALESCE(role, '') = ''
+                OR LOWER(COALESCE(role, '')) = LOWER(?)
+              )
+            )
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `
+    )
+    .all(
+      user.id,
+      String(user.department || ""),
+      String(user.role || ""),
+      Number(limit || 20)
+    )
+    .map(normalizeRecentActivity)
+    .filter(Boolean);
+
+  const taskRows = db
+    .prepare(
+      `
+      SELECT
+        t.id,
+        t.assigned_to AS user_id,
+        t.department,
+        CASE
+          WHEN LOWER(COALESCE(t.status, '')) IN ('completed', 'complete', 'done')
+            THEN 'task_completed'
+          ELSE 'task_assigned'
+        END AS action_type,
+        CASE
+          WHEN LOWER(COALESCE(t.status, '')) IN ('completed', 'complete', 'done')
+            THEN 'Task completed'
+          ELSE 'Task assigned'
+        END AS title,
+        COALESCE(t.title, 'Task') AS message,
+        'task' AS entity_type,
+        t.id AS entity_id,
+        t.created_by,
+        COALESCE(t.completed_at, t.updated_at, t.created_at) AS created_at
+      FROM tasks t
+      WHERE CAST(t.assigned_to AS TEXT) = CAST(? AS TEXT)
+      ORDER BY COALESCE(t.completed_at, t.updated_at, t.created_at) DESC, t.id DESC
+      LIMIT ?
+    `
+    )
+    .all(user.id, Number(limit || 20))
+    .map(normalizeRecentActivity)
+    .filter(Boolean);
+
+  const attendanceRows = db
+    .prepare(
+      `
+      SELECT
+        a.id,
+        a.user_id,
+        a.department,
+        'attendance_marked' AS action_type,
+        'Attendance marked' AS title,
+        a.type || ' recorded for ' || a.date AS message,
+        'attendance' AS entity_type,
+        a.id AS entity_id,
+        NULL AS created_by,
+        a.created_at
+      FROM attendance a
+      WHERE CAST(a.user_id AS TEXT) = CAST(? AS TEXT)
+      ORDER BY a.created_at DESC, a.id DESC
+      LIMIT ?
+    `
+    )
+    .all(user.id, Number(limit || 20))
+    .map(normalizeRecentActivity)
+    .filter(Boolean);
+
+  const projectRows = buildEmployeeProjectCards(user).map((project) =>
+    normalizeRecentActivity({
+      id: `project-${project.id}`,
+      user_id: user.id,
+      department: project.department || user.department || "",
+      role: "employee",
+      action_type: "project_assigned",
+      title: "Project assigned",
+      message: project.name || "Project",
+      entity_type: "project",
+      entity_id: project.id,
+      created_by: project.created_by || "",
+      created_at: project.created_at || project.updated_at || "",
+    })
+  );
+
+  const merged = [
+    ...storedRows,
+    ...taskRows,
+    ...attendanceRows,
+    ...projectRows,
+  ].filter(Boolean);
+
+  const seen = new Set();
+  const unique = [];
+
+  for (const item of merged) {
+    const key = `${item.actionType}-${item.entityType}-${item.entityId}-${item.createdAt}`;
+
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    unique.push(item);
+  }
+
+  unique.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+
+  return unique.slice(0, Number(limit || 20));
+}
+
+/* ---------------- EMPLOYEE PROJECT BOARD / SUBTASK WORKFLOW ---------------- */
+
+function employeeBoardClean(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function employeeBoardIsDone(value) {
+  const status = employeeBoardClean(value);
+  return (
+    status === "completed" ||
+    status === "complete" ||
+    status === "done" ||
+    status === "finished"
+  );
+}
+
+function employeeBoardNormalizeStatus(value) {
+  const status = employeeBoardClean(value);
+
+  if (status === "completed" || status === "complete" || status === "done") {
+    return "Completed";
+  }
+
+  if (
+    status === "in progress" ||
+    status === "in_progress" ||
+    status === "inprogress" ||
+    status === "doing"
+  ) {
+    return "In Progress";
+  }
+
+  return "Pending";
+}
+
+function employeeBoardGetTaskWithSubtasks(taskId) {
+  const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+
+  if (!task) return null;
+
+  const subtasks = db
+    .prepare(
+      `
+      SELECT *
+      FROM subtasks
+      WHERE task_id = ?
+      ORDER BY created_at ASC, id ASC
+    `
+    )
+    .all(task.id);
+
+  return {
+    ...task,
+    subtasks,
+  };
+}
+
+function employeeBoardNormalizeSubtask(row) {
+  return {
+    id: String(row.id),
+    taskId: String(row.task_id || ""),
+    title: row.title || row.name || "Subtask",
+    status: employeeBoardNormalizeStatus(row.status),
+    completed: employeeBoardIsDone(row.status),
+    createdBy: row.created_by || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
+  };
+}
+
+function employeeBoardNormalizeTask(row) {
+  const subtasks = Array.isArray(row.subtasks) ? row.subtasks : [];
+
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id || ""),
+    title: row.title || row.name || "Task",
+    name: row.title || row.name || "Task",
+    description: row.description || "",
+    status: employeeBoardNormalizeStatus(row.status),
+    priority: row.priority || "Medium",
+    assignedTo: String(row.assigned_to || ""),
+    department: row.department || "",
+    dueDate: row.due_date || row.deadline || row.end_date || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
+    completedAt: row.completed_at || "",
+    subtasks: subtasks.map(employeeBoardNormalizeSubtask),
+  };
+}
+
+function employeeBoardSyncTaskStatus(taskId) {
+  const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+
+  if (!task) return null;
+
+  const subtasks = db
+    .prepare("SELECT * FROM subtasks WHERE task_id = ? ORDER BY created_at ASC, id ASC")
+    .all(task.id);
+
+  let nextStatus = "Pending";
+
+  if (subtasks.length > 0) {
+    const completedCount = subtasks.filter((item) =>
+      employeeBoardIsDone(item.status)
+    ).length;
+
+    if (completedCount === 0) {
+      nextStatus = "Pending";
+    } else if (completedCount === subtasks.length) {
+  nextStatus = "Under Review";
+} else {
+  nextStatus = "In Progress";
+}
+  }
+
+  const nowIST = getIndianTimestamp();
+  const completedAt = nextStatus === "Completed" ? nowIST : null;
+
+  db.prepare(
+    `
+    UPDATE tasks
+    SET status = ?,
+        completed_at = ?,
+        updated_at = ?
+    WHERE id = ?
+  `
+  ).run(nextStatus, completedAt, nowIST, task.id);
+
+  recalculateProjectProgress(task.project_id);
+
+  return employeeBoardGetTaskWithSubtasks(task.id);
+}
+
+function employeeBoardUserCanAccessTask(user, task) {
+  if (!user || !task) return false;
+
+  if (user.role === "admin" || user.role === "superAdmin") {
+    return true;
+  }
+
+  return String(task.assigned_to || "") === String(user.id || "");
+}
+
+function employeeBoardUserCanAccessProject(user, projectId) {
+  if (!user || !projectId) return false;
+
+  if (user.role === "admin" || user.role === "superAdmin") {
+    return true;
+  }
+
+  const task = db
+    .prepare(
+      `
+      SELECT id
+      FROM tasks
+      WHERE CAST(project_id AS TEXT) = CAST(? AS TEXT)
+        AND CAST(assigned_to AS TEXT) = CAST(? AS TEXT)
+      LIMIT 1
+    `
+    )
+    .get(String(projectId), String(user.id));
+
+  return Boolean(task);
+}
+
+app.get("/api/employee/projects/:projectId/board", authRequired, (req, res) => {
+  try {
+    const projectId = req.params.projectId;
+
+    const project = db
+      .prepare(
+        `
+        SELECT *
+        FROM projects
+        WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+        LIMIT 1
+      `
+      )
+      .get(String(projectId));
+
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found.",
+      });
+    }
+
+    if (!employeeBoardUserCanAccessProject(req.user, project.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have access to this project.",
+      });
+    }
+
+    let tasksQuery = `
+      SELECT *
+      FROM tasks
+      WHERE CAST(project_id AS TEXT) = CAST(? AS TEXT)
+    `;
+
+    const params = [String(project.id)];
+
+    if (req.user.role === "employee") {
+      tasksQuery += ` AND CAST(assigned_to AS TEXT) = CAST(? AS TEXT)`;
+      params.push(String(req.user.id));
+    }
+
+    tasksQuery += ` ORDER BY created_at ASC, id ASC`;
+
+    const tasks = db.prepare(tasksQuery).all(...params);
+
+    const normalizedTasks = tasks.map((task) => {
+      const taskWithSubtasks = employeeBoardGetTaskWithSubtasks(task.id);
+      return employeeBoardNormalizeTask(taskWithSubtasks);
+    });
+
+    res.json({
+      success: true,
+      project: {
+        id: String(project.id),
+        name: project.name || project.title || "Project",
+        title: project.name || project.title || "Project",
+        description: project.description || "",
+        department: project.department || "",
+        status: project.status || "active",
+        priority: project.priority || "medium",
+        progress: Number(project.progress || 0),
+        createdAt: project.created_at || "",
+        updatedAt: project.updated_at || "",
+        deadline:
+          project.deadline ||
+          project.due_date ||
+          project.end_date ||
+          project.to_date ||
+          "",
+      },
+      tasks: normalizedTasks,
+    });
+  } catch (error) {
+    console.error("Employee project board error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load employee project board.",
+    });
+  }
+});
+
+app.post("/api/employee/subtasks", authRequired, (req, res) => {
+  try {
+    const taskId = req.body?.taskId || req.body?.task_id;
+    const title = String(req.body?.title || req.body?.name || "").trim();
+
+    if (!taskId || !title) {
+      return res.status(400).json({
+        success: false,
+        message: "taskId and title are required.",
+      });
+    }
+
+    const task = db
+      .prepare(
+        `
+        SELECT *
+        FROM tasks
+        WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+        LIMIT 1
+      `
+      )
+      .get(String(taskId));
+
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Main task not found.",
+      });
+    }
+
+    if (!employeeBoardUserCanAccessTask(req.user, task)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can add subtasks only to your assigned tasks.",
+      });
+    }
+
+    const nowIST = getIndianTimestamp();
+
+    const result = db
+      .prepare(
+        `
+        INSERT INTO subtasks (
+          task_id,
+          title,
+          status,
+          created_by,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+      `
+      )
+      .run(task.id, title, "Pending", req.user.id, nowIST, nowIST);
+
+    const insertedSubtask = db
+      .prepare("SELECT * FROM subtasks WHERE id = ?")
+      .get(result.lastInsertRowid);
+
+    const updatedTask = employeeBoardSyncTaskStatus(task.id);
+
+    res.json({
+      success: true,
+      message: "Subtask added successfully.",
+      subtask: employeeBoardNormalizeSubtask(insertedSubtask),
+      task: employeeBoardNormalizeTask(updatedTask),
+    });
+  } catch (error) {
+    console.error("Employee create subtask error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to add subtask.",
+    });
+  }
+});
+
+app.patch("/api/employee/subtasks/:subtaskId/status", authRequired, (req, res) => {
+  try {
+    const subtaskId = req.params.subtaskId;
+
+    const subtask = db
+      .prepare(
+        `
+        SELECT *
+        FROM subtasks
+        WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+        LIMIT 1
+      `
+      )
+      .get(String(subtaskId));
+
+    if (!subtask) {
+      return res.status(404).json({
+        success: false,
+        message: "Subtask not found.",
+      });
+    }
+
+    const task = db
+      .prepare(
+        `
+        SELECT *
+        FROM tasks
+        WHERE id = ?
+        LIMIT 1
+      `
+      )
+      .get(subtask.task_id);
+
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Main task not found.",
+      });
+    }
+
+    if (!employeeBoardUserCanAccessTask(req.user, task)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can update only subtasks from your assigned tasks.",
+      });
+    }
+
+    const requestedStatus =
+      req.body?.completed === true
+        ? "Completed"
+        : req.body?.completed === false
+        ? "Pending"
+        : employeeBoardNormalizeStatus(req.body?.status);
+
+    const finalStatus =
+      requestedStatus === "Completed" ? "Completed" : "Pending";
+
+    db.prepare(
+      `
+      UPDATE subtasks
+      SET status = ?,
+          updated_at = ?
+      WHERE id = ?
+    `
+    ).run(finalStatus, getIndianTimestamp(), subtask.id);
+
+    const updatedSubtask = db
+      .prepare("SELECT * FROM subtasks WHERE id = ?")
+      .get(subtask.id);
+
+    const updatedTask = employeeBoardSyncTaskStatus(task.id);
+
+    res.json({
+      success: true,
+      message: "Subtask updated successfully.",
+      subtask: employeeBoardNormalizeSubtask(updatedSubtask),
+      task: employeeBoardNormalizeTask(updatedTask),
+    });
+  } catch (error) {
+    console.error("Employee update subtask error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to update subtask.",
+    });
+  }
+});
+
+app.delete("/api/employee/subtasks/:subtaskId", authRequired, (req, res) => {
+  try {
+    const subtaskId = req.params.subtaskId;
+
+    const subtask = db
+      .prepare(
+        `
+        SELECT *
+        FROM subtasks
+        WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+        LIMIT 1
+      `
+      )
+      .get(String(subtaskId));
+
+    if (!subtask) {
+      return res.status(404).json({
+        success: false,
+        message: "Subtask not found.",
+      });
+    }
+
+    const task = db
+      .prepare(
+        `
+        SELECT *
+        FROM tasks
+        WHERE id = ?
+        LIMIT 1
+      `
+      )
+      .get(subtask.task_id);
+
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Main task not found.",
+      });
+    }
+
+    if (!employeeBoardUserCanAccessTask(req.user, task)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can delete only subtasks from your assigned tasks.",
+      });
+    }
+
+    db.prepare("DELETE FROM subtasks WHERE id = ?").run(subtask.id);
+
+    const updatedTask = employeeBoardSyncTaskStatus(task.id);
+
+    res.json({
+      success: true,
+      message: "Subtask deleted successfully.",
+      deleted: true,
+      task: employeeBoardNormalizeTask(updatedTask),
+    });
+  } catch (error) {
+    console.error("Employee delete subtask error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete subtask.",
+    });
+  }
+});
+
 /* ---------------- HEALTH ---------------- */
 
 app.get("/api/health", (req, res) => {
@@ -1283,11 +2573,23 @@ app.post("/api/auth/login", async (req, res) => {
       });
     }
 
-    if (user.status === "blocked") {
+        const accountStatus = String(user.status || "active")
+      .trim()
+      .toLowerCase();
+
+    if (accountStatus === "blocked") {
       return res.status(403).json({
         success: false,
-        message:
-          "This account is blocked because of 3 missed mandatory logins. Contact an administrator.",
+        code: "ACCOUNT_BLOCKED",
+        message: "Your account has been blocked. Please contact administrator.",
+      });
+    }
+
+    if (accountStatus === "deleted") {
+      return res.status(403).json({
+        success: false,
+        code: "ACCOUNT_DELETED",
+        message: "Your account has been deleted. Please contact administrator.",
       });
     }
 
@@ -1340,6 +2642,62 @@ app.get("/api/me", authRequired, (req, res) => {
     success: true,
     user: normalizeUser(req.user),
   });
+});
+
+app.get("/api/me/account-status", authRequired, (req, res) => {
+  try {
+    const user = db
+      .prepare(
+        `
+        SELECT id, name, email, role, department, status
+        FROM users
+        WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+        LIMIT 1
+      `
+      )
+      .get(String(req.user.id));
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        code: "USER_NOT_FOUND",
+        message: "User account not found. Please login again.",
+      });
+    }
+
+    const status = String(user.status || "active").trim().toLowerCase();
+
+    if (status === "blocked") {
+      return res.status(403).json({
+        success: false,
+        code: "ACCOUNT_BLOCKED",
+        status: "blocked",
+        message: "Your account has been blocked. Please contact administrator.",
+      });
+    }
+
+    if (status === "deleted") {
+      return res.status(403).json({
+        success: false,
+        code: "ACCOUNT_DELETED",
+        status: "deleted",
+        message: "Your account has been deleted. Please contact administrator.",
+      });
+    }
+
+    res.json({
+      success: true,
+      status: "active",
+      user: normalizeUser(user),
+    });
+  } catch (error) {
+    console.error("Account status check error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to check account status.",
+    });
+  }
 });
 
 /* ---------------- DEPARTMENTS ---------------- */
@@ -1713,71 +3071,397 @@ app.patch("/api/users/:id/status", authRequired, requireAdmin, (req, res) => {
 /* ---------------- PROJECTS ---------------- */
 
 function parseProjectMembers(value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item));
-  }
+  if (!value) return [];
+
+  if (Array.isArray(value)) return value.filter(Boolean);
 
   if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
+    const clean = value.trim();
+    if (!clean) return [];
 
-      if (Array.isArray(parsed)) {
-        return parsed.map((item) => String(item));
-      }
+    try {
+      const parsed = JSON.parse(clean);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean);
+      if (parsed && typeof parsed === "object") return [parsed];
+      return [];
     } catch {
-      return value
+      return clean
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
     }
   }
 
-  return [];
+  if (typeof value === "object") return [value];
+
+  return [value];
+}
+
+function findUserForProjectMember(member) {
+  if (!member) return null;
+
+  let id = "";
+  let email = "";
+  let name = "";
+
+  if (typeof member === "object") {
+    id =
+      member.id ||
+      member._id ||
+      member.uid ||
+      member.userId ||
+      member.user_id ||
+      member.employeeId ||
+      member.employee_id ||
+      "";
+
+    email = member.email || member.userEmail || member.user_email || "";
+
+    name =
+      member.name ||
+      member.fullName ||
+      member.full_name ||
+      member.displayName ||
+      member.display_name ||
+      member.employeeName ||
+      member.employee_name ||
+      "";
+  } else {
+    const value = String(member || "").trim();
+
+    if (value.includes("@")) {
+      email = value;
+    } else if (/^\d+$/.test(value)) {
+      id = value;
+    } else {
+      name = value;
+    }
+  }
+
+  if (id) {
+    const user = db
+      .prepare("SELECT id, name, email, department, role FROM users WHERE id = ? LIMIT 1")
+      .get(id);
+
+    if (user) return user;
+  }
+
+  if (email) {
+    const user = db
+      .prepare("SELECT id, name, email, department, role FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1")
+      .get(email);
+
+    if (user) return user;
+  }
+
+  if (name) {
+    const user = db
+      .prepare("SELECT id, name, email, department, role FROM users WHERE LOWER(name) = LOWER(?) LIMIT 1")
+      .get(name);
+
+    if (user) return user;
+  }
+
+  return null;
+}
+
+function normalizeProjectMember(member) {
+  const user = findUserForProjectMember(member);
+
+  if (user) {
+    return {
+      id: String(user.id),
+      uid: String(user.id),
+      userId: String(user.id),
+      user_id: String(user.id),
+      employeeId: String(user.id),
+      employee_id: String(user.id),
+      name: user.name || "",
+      email: String(user.email || "").trim().toLowerCase(),
+      department: user.department || "",
+      role: user.role || "employee",
+    };
+  }
+
+  if (typeof member === "object" && member) {
+    const id =
+      member.id ||
+      member._id ||
+      member.uid ||
+      member.userId ||
+      member.user_id ||
+      member.employeeId ||
+      member.employee_id ||
+      "";
+
+    const email = member.email || member.userEmail || member.user_email || "";
+
+    const name =
+      member.name ||
+      member.fullName ||
+      member.full_name ||
+      member.displayName ||
+      member.display_name ||
+      member.employeeName ||
+      member.employee_name ||
+      email ||
+      id ||
+      "";
+
+    return {
+      id: id ? String(id) : "",
+      uid: id ? String(id) : "",
+      userId: id ? String(id) : "",
+      user_id: id ? String(id) : "",
+      employeeId: id ? String(id) : "",
+      employee_id: id ? String(id) : "",
+      name: String(name || ""),
+      email: String(email || "").trim().toLowerCase(),
+      department: member.department || member.departmentName || "",
+      role: member.role || "employee",
+    };
+  }
+
+  const value = String(member || "").trim();
+
+  if (!value) return null;
+
+  return {
+    id: value,
+    uid: value,
+    userId: value,
+    user_id: value,
+    employeeId: value,
+    employee_id: value,
+    name: value,
+    email: value.includes("@") ? value.toLowerCase() : "",
+    department: "",
+    role: "employee",
+  };
 }
 
 function stringifyProjectMembers(value) {
-  if (!Array.isArray(value)) {
-    return "[]";
-  }
+  const members = parseProjectMembers(value)
+    .map(normalizeProjectMember)
+    .filter(Boolean);
 
-  return JSON.stringify(value.map((item) => String(item)));
+  const unique = [];
+  const seen = new Set();
+
+  members.forEach((member) => {
+    const key =
+      String(member.email || "").toLowerCase() ||
+      String(member.id || "").toLowerCase() ||
+      String(member.name || "").toLowerCase();
+
+    if (!key || seen.has(key)) return;
+
+    seen.add(key);
+    unique.push(member);
+  });
+
+  return JSON.stringify(unique);
+}
+
+function getIncomingProjectMembers(body = {}) {
+  if (body.members !== undefined) return body.members;
+  if (body.member !== undefined) return body.member;
+
+  if (body.assignedMembers !== undefined) return body.assignedMembers;
+  if (body.assigned_members !== undefined) return body.assigned_members;
+
+  if (body.assignedUsers !== undefined) return body.assignedUsers;
+  if (body.assigned_users !== undefined) return body.assigned_users;
+
+  if (body.assignedEmployees !== undefined) return body.assignedEmployees;
+  if (body.assigned_employees !== undefined) return body.assigned_employees;
+
+  if (body.selectedUsers !== undefined) return body.selectedUsers;
+  if (body.selected_users !== undefined) return body.selected_users;
+
+  if (body.selectedEmployees !== undefined) return body.selectedEmployees;
+  if (body.selected_employees !== undefined) return body.selected_employees;
+
+  if (body.employeeIds !== undefined) return body.employeeIds;
+  if (body.employee_ids !== undefined) return body.employee_ids;
+
+  if (body.assignedUserIds !== undefined) return body.assignedUserIds;
+  if (body.assigned_user_ids !== undefined) return body.assigned_user_ids;
+
+  if (body.assignedEmployeeIds !== undefined) return body.assignedEmployeeIds;
+  if (body.assigned_employee_ids !== undefined) return body.assigned_employee_ids;
+
+  if (body.memberIds !== undefined) return body.memberIds;
+  if (body.member_ids !== undefined) return body.member_ids;
+
+  if (body.users !== undefined) return body.users;
+  if (body.employees !== undefined) return body.employees;
+
+  return undefined;
+}
+
+function normalizeKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function projectHasEmployee(project, user) {
+  if (!project || !user) return false;
+
+  const userKeys = [
+    user.id,
+    user.uid,
+    user.userId,
+    user.user_id,
+    user.employeeId,
+    user.employee_id,
+    user.email,
+    user.name,
+  ]
+    .filter(Boolean)
+    .map(normalizeKey);
+
+  const members = parseProjectMembers(project.members);
+
+  const memberKeys = members
+    .flatMap((member) => {
+      if (!member) return [];
+
+      if (typeof member === "string" || typeof member === "number") {
+        return [member];
+      }
+
+      return [
+        member.id,
+        member._id,
+        member.uid,
+        member.userId,
+        member.user_id,
+        member.employeeId,
+        member.employee_id,
+        member.email,
+        member.name,
+      ];
+    })
+    .filter(Boolean)
+    .map(normalizeKey);
+
+  return userKeys.some((key) => memberKeys.includes(key));
+}
+
+function projectHasAssignedTask(projectId, userId) {
+  const task = db
+    .prepare(
+      `
+      SELECT id
+      FROM tasks
+      WHERE project_id = ?
+        AND assigned_to = ?
+      LIMIT 1
+    `
+    )
+    .get(projectId, userId);
+
+  return Boolean(task);
+}
+
+function employeeCanSeeProject(user, project) {
+  if (!user || !project) return false;
+
+  if (projectHasEmployee(project, user)) return true;
+  if (projectHasAssignedTask(project.id, user.id)) return true;
+
+  return false;
 }
 
 function normalizeProject(row) {
   if (!row) return null;
 
+  const members = parseProjectMembers(row.members);
+
+  const employeeIds = members
+    .map((member) => {
+      if (typeof member === "object") {
+        return String(
+          member.id ||
+            member.uid ||
+            member.userId ||
+            member.user_id ||
+            member.employeeId ||
+            member.employee_id ||
+            member.email ||
+            ""
+        );
+      }
+
+      return String(member || "");
+    })
+    .filter(Boolean);
+
   return {
     ...row,
+
     id: row.id,
     name: row.name || "",
+    title: row.name || "",
+    projectName: row.name || "",
+
     description: row.description || "",
+
     department: row.department || "",
+    division: row.department || "",
+    departmentName: row.department || "",
+
     status: row.status || "active",
     priority: row.priority || "medium",
     progress: Number(row.progress || 0),
+
     managerId: String(row.manager_id || ""),
     manager_id: row.manager_id || "",
-    members: parseProjectMembers(row.members),
+
+    members,
+    member: members,
+
+    assignedMembers: members,
+    assigned_members: members,
+
+    assignedUsers: members,
+    assigned_users: members,
+
+    assignedEmployees: members,
+    assigned_employees: members,
+
+    users: members,
+    employees: members,
+
+    employeeIds,
+    employee_ids: employeeIds,
+
     startDate: row.start_date || "",
     start_date: row.start_date || "",
+
     deadline: row.end_date || "",
     endDate: row.end_date || "",
     end_date: row.end_date || "",
+
     createdBy: String(row.created_by || ""),
     created_by: row.created_by || "",
+
     createdAt: row.created_at || "",
     created_at: row.created_at || "",
+
     updatedAt: row.updated_at || "",
     updated_at: row.updated_at || "",
   };
 }
 
+function getProjectById(id) {
+  return db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
+}
+
 function canManageProject(user, project) {
   if (!user || !project) return false;
 
-  if (user.role === "superAdmin" || user.role === "admin") {
-    return true;
-  }
+  if (user.role === "superAdmin" || user.role === "admin") return true;
 
   if (user.role === "manager") {
     return (
@@ -1789,7 +3473,7 @@ function canManageProject(user, project) {
   return false;
 }
 
-function safePatchValue(incoming, existing, fallback = "") {
+function patchValue(incoming, existing, fallback = "") {
   if (incoming === undefined || incoming === null) return existing ?? fallback;
 
   const value = String(incoming).trim();
@@ -1799,17 +3483,19 @@ function safePatchValue(incoming, existing, fallback = "") {
   return value;
 }
 
-function getProjectById(id) {
-  return db.prepare("SELECT * FROM projects WHERE id = ?").get(id);
-}
-
 app.get("/api/projects", authRequired, (req, res) => {
   try {
-    let projects;
+    let projects = [];
 
     if (req.user.role === "superAdmin" || req.user.role === "admin") {
       projects = db
-        .prepare("SELECT * FROM projects ORDER BY created_at DESC")
+        .prepare(
+          `
+          SELECT *
+          FROM projects
+          ORDER BY created_at DESC
+        `
+        )
         .all();
     } else if (req.user.role === "manager") {
       projects = db
@@ -1824,22 +3510,20 @@ app.get("/api/projects", authRequired, (req, res) => {
         )
         .all(req.user.department, req.user.id);
     } else {
-      projects = db
+      const allProjects = db
         .prepare(
           `
-          SELECT DISTINCT p.*
-          FROM projects p
-          LEFT JOIN users creator ON creator.id = p.created_by
-          LEFT JOIN tasks t ON t.project_id = p.id AND t.assigned_to = ?
-          WHERE creator.role IN ('admin', 'superAdmin')
-             OR p.created_by IS NULL
-             OR p.department = ?
-             OR t.assigned_to = ?
-             OR p.members LIKE ?
-          ORDER BY p.created_at DESC
+          SELECT *
+          FROM projects
+          WHERE COALESCE(status, 'active') != 'deleted'
+          ORDER BY created_at DESC
         `
         )
-        .all(req.user.id, req.user.department, req.user.id, `%${req.user.id}%`);
+        .all();
+
+      projects = allProjects.filter((project) =>
+        employeeCanSeeProject(req.user, project)
+      );
     }
 
     res.json({
@@ -1867,6 +3551,16 @@ app.get("/api/projects/:id", authRequired, (req, res) => {
       });
     }
 
+    if (
+      req.user.role === "employee" &&
+      !employeeCanSeeProject(req.user, project)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have access to this project.",
+      });
+    }
+
     res.json({
       success: true,
       project: normalizeProject(project),
@@ -1883,20 +3577,31 @@ app.get("/api/projects/:id", authRequired, (req, res) => {
 
 app.post("/api/projects", authRequired, requireAdmin, (req, res) => {
   try {
-    const name = String(req.body.name || "").trim();
-    const description = String(req.body.description || "").trim();
-    const department = String(req.body.department || "").trim();
+    const name = String(req.body.name || req.body.title || "").trim();
+
+    const description = String(
+      req.body.description || req.body.details || ""
+    ).trim();
+
+    const department = String(
+      req.body.department || req.body.division || req.body.departmentName || ""
+    ).trim();
+
     const status = String(req.body.status || "active").trim();
     const priority = String(req.body.priority || "medium").trim();
+
     const startDate = String(
       req.body.start_date || req.body.startDate || ""
     ).trim();
+
     const endDate = String(
       req.body.end_date || req.body.endDate || req.body.deadline || ""
     ).trim();
 
     const managerId = req.body.manager_id || req.body.managerId || null;
-    const members = stringifyProjectMembers(req.body.members || []);
+
+    const incomingMembers = getIncomingProjectMembers(req.body);
+    const members = stringifyProjectMembers(incomingMembers || []);
 
     if (!name) {
       return res.status(400).json({
@@ -1923,13 +3628,6 @@ app.post("/api/projects", authRequired, requireAdmin, (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Start date and deadline are required.",
-      });
-    }
-
-    if (new Date(endDate) < new Date(startDate)) {
-      return res.status(400).json({
-        success: false,
-        message: "Deadline must be after start date.",
       });
     }
 
@@ -1974,6 +3672,8 @@ app.post("/api/projects", authRequired, requireAdmin, (req, res) => {
 
     const project = getProjectById(result.lastInsertRowid);
 
+    notifyProjectAssignment(project, req.user, "Project assigned");
+
     res.json({
       success: true,
       project: normalizeProject(project),
@@ -1991,7 +3691,6 @@ app.post("/api/projects", authRequired, requireAdmin, (req, res) => {
 function updateProjectHandler(req, res) {
   try {
     const id = req.params.id;
-
     const existing = getProjectById(id);
 
     if (!existing) {
@@ -2008,32 +3707,40 @@ function updateProjectHandler(req, res) {
       });
     }
 
-    const name = safePatchValue(req.body.name, existing.name, "");
-    const description = safePatchValue(
-      req.body.description,
+    const name = patchValue(
+      req.body.name || req.body.title || req.body.projectName,
+      existing.name,
+      ""
+    );
+
+    const description = patchValue(
+      req.body.description || req.body.details,
       existing.description,
       ""
     );
-    const department = safePatchValue(
-      req.body.department,
+
+    const department = patchValue(
+      req.body.department || req.body.division || req.body.departmentName,
       existing.department,
       ""
     );
-    const status = safePatchValue(req.body.status, existing.status, "active");
-    const priority = safePatchValue(
+
+    const status = patchValue(req.body.status, existing.status, "active");
+
+    const priority = patchValue(
       req.body.priority,
       existing.priority,
       "medium"
     );
 
-    const startDate = safePatchValue(
-      req.body.start_date ?? req.body.startDate,
+    const startDate = patchValue(
+      req.body.start_date || req.body.startDate,
       existing.start_date,
       ""
     );
 
-    const endDate = safePatchValue(
-      req.body.end_date ?? req.body.endDate ?? req.body.deadline,
+    const endDate = patchValue(
+      req.body.end_date || req.body.endDate || req.body.deadline,
       existing.end_date,
       ""
     );
@@ -2049,38 +3756,12 @@ function updateProjectHandler(req, res) {
       existing.manager_id ??
       null;
 
+    const incomingMembers = getIncomingProjectMembers(req.body);
+
     const members =
-      req.body.members !== undefined
-        ? stringifyProjectMembers(req.body.members)
+      incomingMembers !== undefined
+        ? stringifyProjectMembers(incomingMembers)
         : existing.members || "[]";
-
-    if (!name) {
-      return res.status(400).json({
-        success: false,
-        message: "Project name is required.",
-      });
-    }
-
-    if (!description) {
-      return res.status(400).json({
-        success: false,
-        message: "Project description is required.",
-      });
-    }
-
-    if (!department) {
-      return res.status(400).json({
-        success: false,
-        message: "Project department is required.",
-      });
-    }
-
-    if (startDate && endDate && new Date(endDate) < new Date(startDate)) {
-      return res.status(400).json({
-        success: false,
-        message: "Deadline must be after start date.",
-      });
-    }
 
     db.prepare(
       `
@@ -2115,6 +3796,8 @@ function updateProjectHandler(req, res) {
 
     const updated = getProjectById(id);
 
+    notifyProjectAssignment(updated, req.user, "Project updated");
+
     res.json({
       success: true,
       project: normalizeProject(updated),
@@ -2135,7 +3818,6 @@ app.put("/api/projects/:id", authRequired, updateProjectHandler);
 app.delete("/api/projects/:id", authRequired, (req, res) => {
   try {
     const id = req.params.id;
-
     const existing = getProjectById(id);
 
     if (!existing) {
@@ -2152,12 +3834,21 @@ app.delete("/api/projects/:id", authRequired, (req, res) => {
       });
     }
 
-    db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+    db.prepare(
+      `
+      UPDATE projects
+      SET status = ?,
+          updated_at = ?
+      WHERE id = ?
+    `
+    ).run("deleted", getIndianTimestamp(), id);
+
+    const updated = getProjectById(id);
 
     res.json({
       success: true,
       deleted: true,
-      project: normalizeProject(existing),
+      project: normalizeProject(updated),
     });
   } catch (error) {
     console.error("Delete project error:", error);
@@ -2194,19 +3885,19 @@ app.get("/api/tasks", authRequired, (req, res) => {
 
 app.post("/api/tasks", authRequired, (req, res) => {
   try {
-    const {
-      project_id = null,
-      title,
-      description = "",
-      status = "Pending",
-      priority = "Normal",
-      start_date = "",
-      end_date = "",
-      assigned_to = null,
-      department = "",
-    } = req.body;
+    const body = req.body || {};
 
-    if (!title || !String(title).trim()) {
+    const title = String(
+      body.title ||
+        body.name ||
+        body.taskTitle ||
+        body.task_title ||
+        body.taskName ||
+        body.task_name ||
+        ""
+    ).trim();
+
+    if (!title) {
       return res.status(400).json({
         success: false,
         message: "Task title is required.",
@@ -2220,92 +3911,366 @@ app.post("/api/tasks", authRequired, (req, res) => {
       });
     }
 
-    let project = null;
+    function safeDate() {
+      if (typeof getIndianTimestamp === "function") {
+        return getIndianTimestamp();
+      }
 
-    if (project_id) {
-      project = getProjectById(project_id);
+      return new Date().toISOString();
+    }
+
+    function normalizeStatusLocal(value) {
+      const clean = String(value || "Pending")
+        .trim()
+        .toLowerCase()
+        .replaceAll("_", " ")
+        .replaceAll("-", " ");
+
+      if (clean === "completed" || clean === "complete" || clean === "done") {
+        return "Completed";
+      }
+
+      if (clean === "in progress" || clean === "inprogress" || clean === "doing") {
+        return "In Progress";
+      }
+
+      return "Pending";
+    }
+
+    function isDoneStatusLocal(value) {
+      const clean = String(value || "")
+        .trim()
+        .toLowerCase()
+        .replaceAll("_", " ")
+        .replaceAll("-", " ");
+
+      return clean === "completed" || clean === "complete" || clean === "done";
+    }
+
+    function getIncomingAssigneeValue(source = {}) {
+      return (
+        source.assigned_to ??
+        source.assignedTo ??
+        source.assignedToId ??
+        source.assigned_to_id ??
+        source.assignee ??
+        source.assigneeId ??
+        source.assignee_id ??
+        source.employeeId ??
+        source.employee_id ??
+        source.userId ??
+        source.user_id ??
+        source.assignedUser ??
+        source.assigned_user ??
+        source.assignedEmployee ??
+        source.assigned_employee ??
+        null
+      );
+    }
+
+    function findUserByAny(value) {
+      if (value === undefined || value === null || value === "") {
+        return null;
+      }
+
+      if (typeof value === "object") {
+        const fromId =
+          value.id ||
+          value._id ||
+          value.uid ||
+          value.userId ||
+          value.user_id ||
+          value.employeeId ||
+          value.employee_id ||
+          "";
+
+        if (fromId) {
+          const userById = findUserByAny(fromId);
+          if (userById) return userById;
+        }
+
+        const fromEmail =
+          value.email ||
+          value.userEmail ||
+          value.user_email ||
+          value.assignedEmail ||
+          value.assigned_email ||
+          "";
+
+        if (fromEmail) {
+          const userByEmail = findUserByAny(fromEmail);
+          if (userByEmail) return userByEmail;
+        }
+
+        const fromName =
+          value.name ||
+          value.fullName ||
+          value.full_name ||
+          value.displayName ||
+          value.display_name ||
+          value.employeeName ||
+          value.employee_name ||
+          "";
+
+        if (fromName) {
+          const userByName = findUserByAny(fromName);
+          if (userByName) return userByName;
+        }
+
+        return null;
+      }
+
+      const raw = String(value).trim();
+
+      if (!raw) return null;
+
+      return (
+        db
+          .prepare(
+            `
+            SELECT id, name, email, role, department
+            FROM users
+            WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+               OR LOWER(email) = LOWER(?)
+               OR LOWER(name) = LOWER(?)
+            LIMIT 1
+          `
+          )
+          .get(raw, raw, raw) || null
+      );
+    }
+
+    const rawAssignee =
+      getIncomingAssigneeValue(body) ||
+      body.assignedUser ||
+      body.assigned_user ||
+      body.assignedEmployee ||
+      body.assigned_employee ||
+      null;
+
+    const assignee = findUserByAny(rawAssignee);
+
+    if (!assignee?.id) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Assigned employee was not found. Please reselect employee from dropdown.",
+        receivedAssignedValue: rawAssignee,
+      });
+    }
+
+    const requestedProjectId =
+      body.project_id ||
+      body.projectId ||
+      body.projectID ||
+      body.parentProjectId ||
+      body.parent_project_id ||
+      null;
+
+    let project = null;
+    let finalProjectId = null;
+
+    if (requestedProjectId !== null && requestedProjectId !== undefined && requestedProjectId !== "") {
+      project =
+        db
+          .prepare(
+            `
+            SELECT *
+            FROM projects
+            WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+            LIMIT 1
+          `
+          )
+          .get(String(requestedProjectId)) || null;
 
       if (!project) {
         return res.status(404).json({
           success: false,
-          message: "Project not found.",
+          message: `Project not found for id: ${requestedProjectId}`,
         });
       }
 
-      if (
-        req.user.role === "manager" &&
-        project.department !== req.user.department
-      ) {
-        return res.status(403).json({
-          success: false,
-          message: "You cannot add tasks to a project outside your department.",
-        });
-      }
+      finalProjectId = project.id;
     }
 
-    const finalDepartment =
-      project?.department ||
-      (req.user.role === "superAdmin" || req.user.role === "admin"
-        ? department || req.user.department
-        : req.user.department);
+    if (
+      req.user.role === "manager" &&
+      project &&
+      project.department !== req.user.department
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot add tasks to a project outside your department.",
+      });
+    }
 
-    const finalAssignedTo = assigned_to || req.user.id;
-    const nowIST = getIndianTimestamp();
-    const finalStatus = normalizeStatus(status);
+    const finalStatus = normalizeStatusLocal(body.status || "Pending");
+    const nowIST = safeDate();
+
+    const taskColumns = db
+      .prepare("PRAGMA table_info(tasks)")
+      .all()
+      .map((column) => column.name);
+
+    const hasColumn = (name) => taskColumns.includes(name);
+
+    const taskData = {
+      project_id: finalProjectId,
+      title,
+      description: String(body.description || body.details || ""),
+      status: finalStatus,
+      priority: String(body.priority || "Normal"),
+      start_date: String(body.start_date || body.startDate || ""),
+      end_date: String(
+        body.end_date ||
+          body.endDate ||
+          body.due_date ||
+          body.dueDate ||
+          body.deadline ||
+          ""
+      ),
+      assigned_to: assignee.id,
+      department:
+        project?.department ||
+        assignee.department ||
+        body.department ||
+        req.user.department ||
+        "",
+      created_by: req.user.id,
+      completed_at: isDoneStatusLocal(finalStatus) ? nowIST : null,
+      created_at: nowIST,
+      updated_at: nowIST,
+    };
+
+    if (!hasColumn("title")) {
+      return res.status(500).json({
+        success: false,
+        message: "Backend tasks table is missing title column.",
+      });
+    }
+
+    if (!hasColumn("assigned_to")) {
+      return res.status(500).json({
+        success: false,
+        message: "Backend tasks table is missing assigned_to column.",
+      });
+    }
+
+    const insertColumns = Object.keys(taskData).filter(hasColumn);
+    const placeholders = insertColumns.map(() => "?").join(", ");
+    const values = insertColumns.map((column) => taskData[column]);
 
     const result = db
       .prepare(
         `
-        INSERT INTO tasks (
-          project_id,
-          title,
-          description,
-          status,
-          priority,
-          start_date,
-          end_date,
-          assigned_to,
-          department,
-          created_by,
-          completed_at,
-          created_at,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO tasks (${insertColumns.join(", ")})
+        VALUES (${placeholders})
       `
       )
-      .run(
-        project_id,
-        String(title).trim(),
-        description,
-        finalStatus,
-        priority,
-        start_date,
-        end_date,
-        finalAssignedTo,
-        finalDepartment,
-        req.user.id,
-        isDoneStatus(finalStatus) ? nowIST : null,
-        nowIST,
-        nowIST
-      );
+      .run(...values);
 
-    const task = getTaskWithSubtasks(result.lastInsertRowid);
+    let task =
+      db
+        .prepare("SELECT * FROM tasks WHERE id = ?")
+        .get(result.lastInsertRowid) || {
+        id: result.lastInsertRowid,
+        ...taskData,
+      };
 
-    if (project_id) {
-      recalculateProjectProgress(project_id);
+    try {
+      const subtasksTable = db
+        .prepare(
+          `
+          SELECT name
+          FROM sqlite_master
+          WHERE type = 'table'
+            AND name = 'subtasks'
+          LIMIT 1
+        `
+        )
+        .get();
+
+      if (subtasksTable) {
+        const subtasks = db
+          .prepare("SELECT * FROM subtasks WHERE task_id = ? ORDER BY id ASC")
+          .all(task.id);
+
+        task = {
+          ...task,
+          subtasks,
+        };
+      }
+    } catch {
+      // Subtasks are optional here.
+    }
+
+    try {
+      if (typeof notifyTaskAssignment === "function") {
+        notifyTaskAssignment(task, req.user, "Task assigned");
+      }
+    } catch (notifyError) {
+      console.warn("Task notification skipped:", notifyError?.message);
+    }
+
+    try {
+      if (finalProjectId && typeof recalculateProjectProgress === "function") {
+        recalculateProjectProgress(finalProjectId);
+      }
+    } catch (progressError) {
+      console.warn("Project progress recalculation skipped:", progressError?.message);
     }
 
     res.json({
       success: true,
-      task,
+      task: {
+        ...task,
+
+        taskId: task.id,
+        task_id: task.id,
+
+        name: task.title,
+        taskName: task.title,
+        task_name: task.title,
+        taskTitle: task.title,
+        task_title: task.title,
+
+        projectId: task.project_id,
+        project_id: task.project_id,
+
+        assignedTo: task.assigned_to,
+        assigned_to: task.assigned_to,
+        assignedToId: task.assigned_to,
+        assigned_to_id: task.assigned_to,
+
+        assignedUser: {
+          id: assignee.id,
+          name: assignee.name,
+          email: assignee.email,
+          department: assignee.department,
+        },
+
+        startDate: task.start_date,
+        start_date: task.start_date,
+
+        endDate: task.end_date,
+        end_date: task.end_date,
+        dueDate: task.end_date,
+        due_date: task.end_date,
+
+        createdAt: task.created_at,
+        created_at: task.created_at,
+
+        updatedAt: task.updated_at,
+        updated_at: task.updated_at,
+      },
     });
   } catch (error) {
-    console.error("Create task error:", error);
+    console.error("Create task full backend error:", error);
 
     res.status(500).json({
       success: false,
-      message: "Failed to create task.",
+      message: error?.message || "Failed to create task.",
+      backendError: error?.stack || String(error),
     });
   }
 });
@@ -2382,6 +4347,22 @@ app.patch("/api/tasks/:id", authRequired, (req, res) => {
 
     const updated = getTaskWithSubtasks(id);
 
+    if (String(updated.assigned_to || "") !== String(task.assigned_to || "")) {
+      notifyTaskAssignment(updated, req.user, "Task assigned");
+    } else if (String(updated.status || "") !== String(task.status || "")) {
+      recordEmployeeActivity({
+        userId: updated.assigned_to,
+        role: "employee",
+        department: updated.department || "",
+        actionType: isDoneStatus(updated.status) ? "task_completed" : "task_status_changed",
+        title: isDoneStatus(updated.status) ? "Task completed" : "Task status changed",
+        message: `${updated.title || "Task"} is now ${updated.status || "updated"}.`,
+        entityType: "task",
+        entityId: updated.id,
+        createdBy: req.user.id,
+      });
+    }
+
     recalculateProjectProgress(updated.project_id);
 
     res.json({
@@ -2433,6 +4414,30 @@ app.patch("/api/tasks/:id/status", authRequired, (req, res) => {
     ).run(finalStatus, completedAt, nowIST, req.params.id);
 
     const updated = getTaskWithSubtasks(req.params.id);
+
+    recordEmployeeActivity({
+      userId: updated.assigned_to,
+      role: "employee",
+      department: updated.department || "",
+      actionType: isDoneStatus(updated.status) ? "task_completed" : "task_status_changed",
+      title: isDoneStatus(updated.status) ? "Task completed" : "Task status changed",
+      message: `${updated.title || "Task"} is now ${updated.status || "updated"}.`,
+      entityType: "task",
+      entityId: updated.id,
+      createdBy: req.user.id,
+    });
+
+    createNotification({
+      title: isDoneStatus(updated.status) ? "Task completed" : "Task status updated",
+      message: `${updated.title || "Task"} is now ${updated.status || "updated"}.`,
+      severity: "standard",
+      targetType: "User",
+      userId: updated.assigned_to,
+      department: updated.department || "",
+      entityType: "task",
+      entityId: updated.id,
+      createdBy: req.user.id,
+    });
 
     recalculateProjectProgress(updated.project_id);
 
@@ -2944,6 +4949,380 @@ app.post(
 
 /* ---------------- ATTENDANCE ---------------- */
 
+function normalizeAttendanceRecord(row) {
+  if (!row) return null;
+
+  return {
+    ...row,
+    id: row.id,
+    userId: String(row.user_id || ""),
+    userName: row.user_name || "",
+    userEmail: row.user_email || "",
+    department: row.department || "",
+    type: row.type || "",
+    status: row.status || "",
+    date: row.date || "",
+    checkIn: row.check_in || "",
+    checkOut: row.check_out || "",
+    createdAt: row.created_at || "",
+    updatedAt: row.updated_at || "",
+  };
+}
+
+function toDateString(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getMonthRange(referenceDate = getTodayDate()) {
+  const [year, month] = String(referenceDate || getTodayDate())
+    .slice(0, 10)
+    .split("-")
+    .map(Number);
+
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+
+  return {
+    startDate: `${year}-${String(month).padStart(2, "0")}-01`,
+    endDate: `${year}-${String(month).padStart(2, "0")}-${String(
+      lastDay
+    ).padStart(2, "0")}`,
+  };
+}
+
+function getWeekRange(referenceDate = getTodayDate()) {
+  const [year, month, day] = String(referenceDate || getTodayDate())
+    .slice(0, 10)
+    .split("-")
+    .map(Number);
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const weekDay = date.getUTCDay();
+  const diffToMonday = weekDay === 0 ? -6 : 1 - weekDay;
+
+  const monday = new Date(date);
+  monday.setUTCDate(date.getUTCDate() + diffToMonday);
+
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+
+  return {
+    startDate: toDateString(monday),
+    endDate: toDateString(sunday),
+  };
+}
+
+function getDatesBetween(startDate, endDate) {
+  const dates = [];
+  const [startYear, startMonth, startDay] = String(startDate)
+    .split("-")
+    .map(Number);
+  const [endYear, endMonth, endDay] = String(endDate).split("-").map(Number);
+
+  const current = new Date(Date.UTC(startYear, startMonth - 1, startDay));
+  const end = new Date(Date.UTC(endYear, endMonth - 1, endDay));
+
+  while (current <= end) {
+    dates.push(toDateString(current));
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+
+  return dates;
+}
+
+function getAttendanceRowsForUserDate(userId, dateString) {
+  return db
+    .prepare(
+      `
+      SELECT *
+      FROM attendance
+      WHERE CAST(user_id AS TEXT) = CAST(? AS TEXT)
+        AND date = ?
+      ORDER BY created_at ASC, id ASC
+    `
+    )
+    .all(userId, dateString);
+}
+
+function getLeaveForUserDate(userId, dateString) {
+  return (
+    db
+      .prepare(
+        `
+        SELECT *
+        FROM leave_requests
+        WHERE CAST(user_id AS TEXT) = CAST(? AS TEXT)
+          AND start_date <= ?
+          AND end_date >= ?
+          AND LOWER(COALESCE(status, '')) IN ('pending', 'approved')
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+      `
+      )
+      .get(userId, dateString, dateString) || null
+  );
+}
+
+function getMinutesBetween(startTimestamp, endTimestamp) {
+  const start = parseSqlTimestamp(startTimestamp);
+  const end = parseSqlTimestamp(endTimestamp);
+
+  if (!start || !end) return 0;
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+
+  const diff = end.getTime() - start.getTime();
+
+  if (diff <= 0) return 0;
+
+  return Math.round(diff / 60000);
+}
+
+function getAttendanceMinutesFromRows(rows, includeRunning = false) {
+  let totalMinutes = 0;
+  let activeCheckIn = null;
+
+  for (const row of rows) {
+    if (row.type === "Check In") {
+      activeCheckIn = row.created_at;
+    }
+
+    if (row.type === "Check Out" && activeCheckIn) {
+      totalMinutes += getMinutesBetween(activeCheckIn, row.created_at);
+      activeCheckIn = null;
+    }
+  }
+
+  if (includeRunning && activeCheckIn) {
+    const nowIST = getIndianTimestamp();
+    totalMinutes += getMinutesBetween(activeCheckIn, nowIST);
+  }
+
+  return Math.max(totalMinutes, 0);
+}
+
+function formatAttendanceMinutes(minutes) {
+  const total = Number(minutes || 0);
+  const hours = Math.floor(total / 60);
+  const mins = total % 60;
+
+  if (hours && mins) return `${hours}h ${mins}m`;
+  if (hours) return `${hours}h 0m`;
+  if (mins) return `${mins}m`;
+
+  return "0m";
+}
+
+function getFirstCheckIn(rows) {
+  return rows.find((row) => row.type === "Check In") || null;
+}
+
+function getLastCheckOut(rows) {
+  return [...rows].reverse().find((row) => row.type === "Check Out") || null;
+}
+
+function getTimeLabel(timestamp) {
+  if (!timestamp) return "--:--";
+
+  const date = parseSqlTimestamp(timestamp);
+
+  if (!date || Number.isNaN(date.getTime())) {
+    return String(timestamp).slice(11, 16) || "--:--";
+  }
+
+  return date.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+function buildAttendanceDay(userId, dateString) {
+  const today = getTodayDate();
+  const rows = getAttendanceRowsForUserDate(userId, dateString);
+  const leave = getLeaveForUserDate(userId, dateString);
+  const isFuture = dateString > today;
+  const workingDate = isWorkingDate(dateString);
+
+  const firstCheckIn = getFirstCheckIn(rows);
+  const lastCheckOut = getLastCheckOut(rows);
+  const hasOpenCheckIn = rows.length > 0 && rows[rows.length - 1]?.type === "Check In";
+
+  const minutes = getAttendanceMinutesFromRows(
+    rows,
+    dateString === today && hasOpenCheckIn
+  );
+
+  let status = "empty";
+  let label = "...";
+
+  if (!workingDate || isFuture) {
+    status = "empty";
+    label = "...";
+  } else if (leave && String(leave.status || "").toLowerCase() === "approved") {
+    status = "leave";
+    label = "Leave";
+  } else if (leave && String(leave.status || "").toLowerCase() === "pending") {
+    status = "pending";
+    label = "Pending";
+  } else if (firstCheckIn) {
+    const checkInTime = String(firstCheckIn.created_at || "").slice(11, 16);
+
+    if (checkInTime && checkInTime > "10:15") {
+      status = "late";
+    } else {
+      status = "present";
+    }
+
+    label = minutes ? formatAttendanceMinutes(minutes) : "Present";
+  } else {
+    status = "absent";
+    label = "Absent";
+  }
+
+  return {
+    date: dateString,
+    day: new Date(`${dateString}T00:00:00`).toLocaleDateString("en-US", {
+      weekday: "short",
+    }),
+    displayDate: new Date(`${dateString}T00:00:00`).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    }),
+    status,
+    label,
+    minutes,
+    checkIn: firstCheckIn ? getTimeLabel(firstCheckIn.created_at) : "--:--",
+    checkOut: lastCheckOut ? getTimeLabel(lastCheckOut.created_at) : "--:--",
+    rawCheckIn: firstCheckIn?.created_at || "",
+    rawCheckOut: lastCheckOut?.created_at || "",
+    records: rows.map(normalizeAttendanceRecord).filter(Boolean),
+    leave: leave ? normalizeLeaveRequest(leave) : null,
+  };
+}
+
+function buildEmployeeAttendanceDashboard(userId, referenceDate = getTodayDate()) {
+  const today = getTodayDate();
+  const selectedDate = String(referenceDate || today).slice(0, 10);
+
+  const weekRange = getWeekRange(selectedDate);
+  const monthRange = getMonthRange(selectedDate);
+
+  const weekDays = getDatesBetween(weekRange.startDate, weekRange.endDate).map(
+    (dateString) => buildAttendanceDay(userId, dateString)
+  );
+
+  const monthDates = getDatesBetween(monthRange.startDate, today).filter(
+    (dateString) => dateString.startsWith(monthRange.startDate.slice(0, 7))
+  );
+
+  const monthDays = monthDates
+    .filter((dateString) => isWorkingDate(dateString))
+    .map((dateString) => buildAttendanceDay(userId, dateString));
+
+  const present = monthDays.filter((day) =>
+    ["present", "late"].includes(day.status)
+  ).length;
+
+  const late = monthDays.filter((day) => day.status === "late").length;
+  const leave = monthDays.filter((day) => day.status === "leave").length;
+  const pending = monthDays.filter((day) => day.status === "pending").length;
+  const absent = monthDays.filter((day) => day.status === "absent").length;
+  const workingDays = monthDays.length;
+
+  const attendancePercent = workingDays
+    ? Math.round(((present + leave) / workingDays) * 100)
+    : 0;
+
+  const selectedDay = buildAttendanceDay(userId, selectedDate);
+  const currentDay = buildAttendanceDay(userId, today);
+
+  return {
+    selectedDate,
+    today: currentDay,
+    selectedDay,
+    week: {
+      startDate: weekRange.startDate,
+      endDate: weekRange.endDate,
+      days: weekDays,
+    },
+    month: {
+      month: monthRange.startDate.slice(0, 7),
+      workingDays,
+      present,
+      absent,
+      late,
+      leave,
+      pending,
+      attendancePercent,
+      percentage: attendancePercent,
+    },
+  };
+}
+
+app.get("/api/attendance/me", authRequired, (req, res) => {
+  try {
+    ensureAutoCheckOut(req.user);
+
+    const referenceDate = String(req.query.date || getTodayDate()).slice(0, 10);
+    const dashboard = buildEmployeeAttendanceDashboard(req.user.id, referenceDate);
+
+    const monthRange = getMonthRange(referenceDate);
+    const records = db
+      .prepare(
+        `
+        SELECT *
+        FROM attendance
+        WHERE CAST(user_id AS TEXT) = CAST(? AS TEXT)
+          AND date >= ?
+          AND date <= ?
+        ORDER BY date DESC, created_at DESC, id DESC
+      `
+      )
+      .all(req.user.id, monthRange.startDate, monthRange.endDate)
+      .map(normalizeAttendanceRecord)
+      .filter(Boolean);
+
+    res.json({
+      success: true,
+      ...dashboard,
+      records,
+      attendance: records,
+      currentStatus:
+        dashboard.today.rawCheckIn && !dashboard.today.rawCheckOut
+          ? "checkedIn"
+          : "checkedOut",
+      latestAttendance: getLatestAttendanceEvent(req.user.id) || null,
+    });
+  } catch (error) {
+    console.error("Get my attendance error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load your attendance.",
+    });
+  }
+});
+
+app.get("/api/attendance/me/summary", authRequired, (req, res) => {
+  try {
+    ensureAutoCheckOut(req.user);
+
+    const referenceDate = String(req.query.date || getTodayDate()).slice(0, 10);
+    const dashboard = buildEmployeeAttendanceDashboard(req.user.id, referenceDate);
+
+    res.json({
+      success: true,
+      ...dashboard,
+    });
+  } catch (error) {
+    console.error("Get my attendance summary error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load your attendance summary.",
+    });
+  }
+});
+
 app.get("/api/attendance", authRequired, (req, res) => {
   ensureAutoCheckOut(req.user);
 
@@ -2986,7 +5365,7 @@ app.get("/api/attendance", authRequired, (req, res) => {
 
   res.json({
     success: true,
-    attendance,
+    attendance: attendance.map(normalizeAttendanceRecord).filter(Boolean),
     currentStatus: latest?.type === "Check In" ? "checkedIn" : "checkedOut",
     latestAttendance: latest || null,
   });
@@ -3008,7 +5387,7 @@ app.post("/api/attendance", authRequired, (req, res) => {
     return res.json({
       success: true,
       message: "You are already checked in.",
-      attendance: latest,
+      attendance: normalizeAttendanceRecord(latest),
       currentStatus: "checkedIn",
     });
   }
@@ -3017,7 +5396,7 @@ app.post("/api/attendance", authRequired, (req, res) => {
     return res.json({
       success: true,
       message: "You are already checked out.",
-      attendance: latest || null,
+      attendance: latest ? normalizeAttendanceRecord(latest) : null,
       currentStatus: "checkedOut",
     });
   }
@@ -3026,7 +5405,7 @@ app.post("/api/attendance", authRequired, (req, res) => {
 
   res.json({
     success: true,
-    attendance,
+    attendance: normalizeAttendanceRecord(attendance),
     currentStatus: type === "Check In" ? "checkedIn" : "checkedOut",
   });
 });
@@ -3036,85 +5415,127 @@ app.post("/api/attendance", authRequired, (req, res) => {
 function normalizeLeaveRequest(row) {
   if (!row) return null;
 
+  const hasAttachment = Boolean(row.attachment_path);
+
   return {
     id: row.id,
     leaveId: row.id,
+
     userId: String(row.user_id || ""),
     userName: row.user_name || "",
     userEmail: row.user_email || "",
     department: row.department || "",
+
     leaveType: row.leave_type || "Leave",
+    leave_type: row.leave_type || "Leave",
+
     emergencyContact: row.emergency_contact || "",
+    emergency_contact: row.emergency_contact || "",
+
     startDate: row.start_date || "",
+    start_date: row.start_date || "",
+    fromDate: row.start_date || "",
+
     endDate: row.end_date || "",
+    end_date: row.end_date || "",
+    toDate: row.end_date || "",
+
     reason: row.reason || "",
     status: row.status || "pending",
+
     approvedBy: row.approved_by || "",
+    approved_by: row.approved_by || "",
+
     adminComment: row.admin_comment || "",
+    admin_comment: row.admin_comment || "",
+
+    reviewedAt: row.reviewed_at || "",
+    reviewed_at: row.reviewed_at || "",
+
     createdAt: row.created_at || "",
+    created_at: row.created_at || "",
+
     updatedAt: row.updated_at || "",
+    updated_at: row.updated_at || "",
+
+    hasAttachment,
+    attachmentFilename: row.attachment_filename || "",
+    attachment_filename: row.attachment_filename || "",
+    attachmentOriginalName: row.attachment_original_name || "",
+    attachment_original_name: row.attachment_original_name || "",
+    attachmentMimeType: row.attachment_mime_type || "",
+    attachment_mime_type: row.attachment_mime_type || "",
+    attachmentSize: Number(row.attachment_size || 0),
+    attachment_size: Number(row.attachment_size || 0),
+    attachmentUrl: hasAttachment ? `/api/leaves/${row.id}/attachment` : "",
   };
 }
 
-app.get("/api/leave-requests", authRequired, (req, res) => {
-  try {
-    let leaveRequests;
+function canAccessLeaveRequest(user, leaveRequest) {
+  if (!user || !leaveRequest) return false;
 
-    if (req.user.role === "superAdmin") {
-      leaveRequests = db
-        .prepare("SELECT * FROM leave_requests ORDER BY created_at DESC")
-        .all();
-    } else if (req.user.role === "admin") {
-      leaveRequests = db
-        .prepare(
-          `
-          SELECT lr.*
-          FROM leave_requests lr
-          LEFT JOIN users u ON u.id = lr.user_id
-          WHERE COALESCE(u.role, '') != 'superAdmin'
-          ORDER BY lr.created_at DESC
-        `
-        )
-        .all();
-    } else if (req.user.role === "manager") {
-      leaveRequests = db
-        .prepare(
-          `
-          SELECT lr.*
-          FROM leave_requests lr
-          LEFT JOIN users u ON u.id = lr.user_id
-          WHERE lr.department = ?
-            AND COALESCE(u.role, '') != 'superAdmin'
-          ORDER BY lr.created_at DESC
-        `
-        )
-        .all(req.user.department);
-    } else {
-      leaveRequests = db
-        .prepare(
-          "SELECT * FROM leave_requests WHERE user_id = ? ORDER BY created_at DESC"
-        )
-        .all(req.user.id);
-    }
+  if (user.role === "superAdmin") return true;
 
-    res.json({
-      success: true,
-      leaveRequests: leaveRequests.map(normalizeLeaveRequest),
-    });
-  } catch (error) {
-    console.error("Get leave requests error:", error);
+  if (user.role === "admin") {
+    const leaveUser = db
+      .prepare("SELECT role FROM users WHERE id = ?")
+      .get(leaveRequest.user_id);
 
-    res.status(500).json({
-      success: false,
-      message: "Failed to load leave requests.",
-    });
+    return leaveUser?.role !== "superAdmin";
   }
-});
 
-app.post("/api/leave-requests", authRequired, (req, res) => {
+  if (user.role === "manager") {
+    return String(leaveRequest.department || "") === String(user.department || "");
+  }
+
+  return Number(leaveRequest.user_id) === Number(user.id);
+}
+
+function getLeaveRequestsForUser(user) {
+  if (user.role === "superAdmin") {
+    return db.prepare("SELECT * FROM leave_requests ORDER BY created_at DESC").all();
+  }
+
+  if (user.role === "admin") {
+    return db
+      .prepare(
+        `
+        SELECT lr.*
+        FROM leave_requests lr
+        LEFT JOIN users u ON u.id = lr.user_id
+        WHERE COALESCE(u.role, '') != 'superAdmin'
+        ORDER BY lr.created_at DESC
+      `
+      )
+      .all();
+  }
+
+  if (user.role === "manager") {
+    return db
+      .prepare(
+        `
+        SELECT lr.*
+        FROM leave_requests lr
+        LEFT JOIN users u ON u.id = lr.user_id
+        WHERE lr.department = ?
+          AND COALESCE(u.role, '') != 'superAdmin'
+        ORDER BY lr.created_at DESC
+      `
+      )
+      .all(user.department);
+  }
+
+  return db
+    .prepare(
+      "SELECT * FROM leave_requests WHERE user_id = ? ORDER BY created_at DESC"
+    )
+    .all(user.id);
+}
+
+function createLeaveRequestHandler(req, res) {
   try {
     const leaveType = String(
-      req.body.leaveType || req.body.leave_type || "Leave"
+      req.body.leaveType || req.body.leave_type || req.body.type || "Leave"
     ).trim();
 
     const emergencyContact = String(
@@ -3122,12 +5543,16 @@ app.post("/api/leave-requests", authRequired, (req, res) => {
     ).trim();
 
     const startDate = String(
-      req.body.startDate || req.body.start_date || ""
+      req.body.startDate || req.body.start_date || req.body.fromDate || ""
     ).trim();
 
-    const endDate = String(req.body.endDate || req.body.end_date || "").trim();
+    const endDate = String(
+      req.body.endDate || req.body.end_date || req.body.toDate || ""
+    ).trim();
 
-    const reason = String(req.body.reason || "").trim();
+    const reason = String(
+      req.body.reason || req.body.message || req.body.description || ""
+    ).trim();
 
     if (!startDate || !endDate) {
       return res.status(400).json({
@@ -3151,6 +5576,7 @@ app.post("/api/leave-requests", authRequired, (req, res) => {
     }
 
     const nowIST = getIndianTimestamp();
+    const file = req.file || null;
 
     const result = db
       .prepare(
@@ -3168,10 +5594,15 @@ app.post("/api/leave-requests", authRequired, (req, res) => {
           status,
           approved_by,
           admin_comment,
+          attachment_filename,
+          attachment_original_name,
+          attachment_path,
+          attachment_mime_type,
+          attachment_size,
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
       )
       .run(
@@ -3187,6 +5618,11 @@ app.post("/api/leave-requests", authRequired, (req, res) => {
         "pending",
         null,
         "",
+        file?.filename || "",
+        file?.originalname || "",
+        file?.path || "",
+        file?.mimetype || "",
+        file?.size || 0,
         nowIST,
         nowIST
       );
@@ -3195,25 +5631,53 @@ app.post("/api/leave-requests", authRequired, (req, res) => {
       .prepare("SELECT * FROM leave_requests WHERE id = ?")
       .get(result.lastInsertRowid);
 
+    try {
+      recordEmployeeActivity({
+        userId: req.user.id,
+        role: req.user.role || "employee",
+        department: req.user.department || "",
+        actionType: "leave_requested",
+        title: "Leave requested",
+        message: `${leaveType} requested from ${startDate} to ${endDate}.`,
+        entityType: "leave",
+        entityId: leaveRequest.id,
+        createdBy: req.user.id,
+      });
+    } catch {
+      // Recent activity is optional.
+    }
+
     res.json({
       success: true,
       leaveRequest: normalizeLeaveRequest(leaveRequest),
+      leave: normalizeLeaveRequest(leaveRequest),
     });
   } catch (error) {
     console.error("Create leave request error:", error);
+
+    if (req.file?.path) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch {
+        // ignore cleanup failure
+      }
+    }
 
     res.status(500).json({
       success: false,
       message: "Failed to submit leave request.",
     });
   }
-});
+}
 
-app.patch("/api/leave-requests/:id", authRequired, requireAdmin, (req, res) => {
+function reviewLeaveRequestHandler(req, res) {
   try {
     const id = req.params.id;
     const status = String(req.body.status || "").trim().toLowerCase();
-    const adminComment = String(req.body.adminComment || "").trim();
+
+    const adminComment = String(
+      req.body.adminComment || req.body.admin_comment || ""
+    ).trim();
 
     if (!["approved", "rejected"].includes(status)) {
       return res.status(400).json({
@@ -3240,14 +5704,10 @@ app.patch("/api/leave-requests/:id", authRequired, requireAdmin, (req, res) => {
       });
     }
 
-    const leaveUser = db
-      .prepare("SELECT * FROM users WHERE id = ?")
-      .get(leaveRequest.user_id);
-
-    if (req.user.role === "admin" && leaveUser?.role === "superAdmin") {
+    if (!canAccessLeaveRequest(req.user, leaveRequest)) {
       return res.status(403).json({
         success: false,
-        message: "Admin cannot review Super Admin leave requests.",
+        message: "You cannot review this leave request.",
       });
     }
 
@@ -3259,18 +5719,39 @@ app.patch("/api/leave-requests/:id", authRequired, requireAdmin, (req, res) => {
       SET status = ?,
           approved_by = ?,
           admin_comment = ?,
+          reviewed_at = ?,
           updated_at = ?
       WHERE id = ?
     `
-    ).run(status, req.user.id, adminComment, nowIST, id);
+    ).run(status, req.user.id, adminComment, nowIST, nowIST, id);
 
     const updated = db
       .prepare("SELECT * FROM leave_requests WHERE id = ?")
       .get(id);
 
+    try {
+      createNotification({
+        title: status === "approved" ? "Leave approved" : "Leave rejected",
+        message:
+          status === "approved"
+            ? "Your leave request was approved."
+            : `Your leave request was rejected.${adminComment ? ` Reason: ${adminComment}` : ""}`,
+        severity: status === "approved" ? "success" : "warning",
+        targetType: "User",
+        userId: updated.user_id,
+        department: updated.department || "",
+        entityType: "leave",
+        entityId: updated.id,
+        createdBy: req.user.id,
+      });
+    } catch {
+      // Notification is optional.
+    }
+
     res.json({
       success: true,
       leaveRequest: normalizeLeaveRequest(updated),
+      leave: normalizeLeaveRequest(updated),
     });
   } catch (error) {
     console.error("Review leave request error:", error);
@@ -3280,7 +5761,143 @@ app.patch("/api/leave-requests/:id", authRequired, requireAdmin, (req, res) => {
       message: "Failed to update leave request.",
     });
   }
+}
+
+app.get("/api/leaves/me", authRequired, (req, res) => {
+  try {
+    const leaveRequests = db
+      .prepare(
+        "SELECT * FROM leave_requests WHERE user_id = ? ORDER BY created_at DESC"
+      )
+      .all(req.user.id)
+      .map(normalizeLeaveRequest)
+      .filter(Boolean);
+
+    res.json({
+      success: true,
+      leaveRequests,
+      leaves: leaveRequests,
+    });
+  } catch (error) {
+    console.error("Get my leaves error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load your leave requests.",
+    });
+  }
 });
+
+app.get("/api/leaves", authRequired, (req, res) => {
+  try {
+    const leaveRequests = getLeaveRequestsForUser(req.user)
+      .map(normalizeLeaveRequest)
+      .filter(Boolean);
+
+    res.json({
+      success: true,
+      leaveRequests,
+      leaves: leaveRequests,
+    });
+  } catch (error) {
+    console.error("Get leaves error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load leave requests.",
+    });
+  }
+});
+
+app.get("/api/leave-requests", authRequired, (req, res) => {
+  try {
+    const leaveRequests = getLeaveRequestsForUser(req.user)
+      .map(normalizeLeaveRequest)
+      .filter(Boolean);
+
+    res.json({
+      success: true,
+      leaveRequests,
+      leaves: leaveRequests,
+    });
+  } catch (error) {
+    console.error("Get leave requests error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load leave requests.",
+    });
+  }
+});
+
+app.post(
+  "/api/leaves",
+  authRequired,
+  uploadLeaveAttachment,
+  createLeaveRequestHandler
+);
+
+app.post(
+  "/api/leave-requests",
+  authRequired,
+  uploadLeaveAttachment,
+  createLeaveRequestHandler
+);
+
+app.get("/api/leaves/:id/attachment", authRequired, (req, res) => {
+  try {
+    const leaveRequest = db
+      .prepare("SELECT * FROM leave_requests WHERE id = ?")
+      .get(req.params.id);
+
+    if (!leaveRequest) {
+      return res.status(404).json({
+        success: false,
+        message: "Leave request not found.",
+      });
+    }
+
+    if (!canAccessLeaveRequest(req.user, leaveRequest)) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot access this attachment.",
+      });
+    }
+
+    if (!leaveRequest.attachment_path) {
+      return res.status(404).json({
+        success: false,
+        message: "No attachment found for this leave request.",
+      });
+    }
+
+    if (!fs.existsSync(leaveRequest.attachment_path)) {
+      return res.status(404).json({
+        success: false,
+        message: "Attachment file is missing from server.",
+      });
+    }
+
+    res.download(
+      leaveRequest.attachment_path,
+      leaveRequest.attachment_original_name ||
+        leaveRequest.attachment_filename ||
+        "leave-attachment"
+    );
+  } catch (error) {
+    console.error("Download leave attachment error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to download attachment.",
+    });
+  }
+});
+
+app.patch("/api/leaves/:id/review", authRequired, requireAdmin, reviewLeaveRequestHandler);
+app.patch("/api/leaves/:id", authRequired, requireAdmin, reviewLeaveRequestHandler);
+app.patch("/api/leave-requests/:id/review", authRequired, requireAdmin, reviewLeaveRequestHandler);
+app.patch("/api/leave-requests/:id", authRequired, requireAdmin, reviewLeaveRequestHandler);
 
 /* ---------------- PROJECT TIME ENTRIES ---------------- */
 
@@ -3659,80 +6276,416 @@ app.patch("/api/admin/time-entries/:id/review", authRequired, requireAdmin, (req
 /* ---------------- NOTIFICATIONS ---------------- */
 
 app.get("/api/notifications", authRequired, (req, res) => {
-  const notifications = db
-    .prepare(
-      `
-      SELECT *
-      FROM notifications
-      WHERE target_type = 'General'
-         OR user_id = ?
-         OR department = ?
-      ORDER BY created_at DESC
-    `
-    )
-    .all(req.user.id, req.user.department);
+  try {
+    const limit = Number(req.query.limit || 50);
+    const notifications = getNotificationsForUser(req.user, limit);
 
-  res.json({
-    success: true,
-    notifications,
-  });
+    const unreadCount = notifications.filter((item) => !item.isRead).length;
+
+    res.json({
+      success: true,
+      total: notifications.length,
+      unreadCount,
+      notifications,
+    });
+  } catch (error) {
+    console.error("Get notifications error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load notifications.",
+    });
+  }
 });
 
 app.post("/api/notifications", authRequired, requireAdmin, (req, res) => {
-  const {
-    title,
-    message = "",
-    severity = "standard",
-    target_type = "General",
-    department = "",
-    user_id = null,
-  } = req.body;
+  try {
+    const title = String(req.body.title || "").trim();
+    const message = String(req.body.message || "").trim();
+    const severity = String(req.body.severity || "standard").trim();
+    const targetType = String(
+      req.body.target_type || req.body.targetType || "General"
+    ).trim();
+    const department = String(req.body.department || "").trim();
+    const role = String(req.body.role || "").trim();
+    const userId = req.body.user_id || req.body.userId || null;
 
-  if (!title) {
-    return res.status(400).json({
-      success: false,
-      message: "Notification title is required.",
-    });
-  }
+    if (!title) {
+      return res.status(400).json({
+        success: false,
+        message: "Notification title is required.",
+      });
+    }
 
-  const nowIST = getIndianTimestamp();
-
-  const result = db
-    .prepare(
-      `
-      INSERT INTO notifications (
-        title,
-        message,
-        severity,
-        target_type,
-        department,
-        user_id,
-        created_by,
-        created_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `
-    )
-    .run(
+    const notification = createNotification({
       title,
       message,
       severity,
-      target_type,
+      targetType,
+      role,
       department,
-      user_id,
-      req.user.id,
-      nowIST
+      userId,
+      entityType: req.body.entity_type || req.body.entityType || "",
+      entityId: req.body.entity_id || req.body.entityId || null,
+      createdBy: req.user.id,
+    });
+
+    if (userId) {
+      recordEmployeeActivity({
+        userId,
+        role: "employee",
+        department,
+        actionType: "admin_message",
+        title,
+        message,
+        entityType: "notification",
+        entityId: notification?.id || null,
+        createdBy: req.user.id,
+      });
+    } else {
+      recordEmployeeActivity({
+        role,
+        department,
+        actionType: "announcement",
+        title,
+        message,
+        entityType: "notification",
+        entityId: notification?.id || null,
+        createdBy: req.user.id,
+      });
+    }
+
+    res.json({
+      success: true,
+      notification: normalizeNotification(notification),
+    });
+  } catch (error) {
+    console.error("Create notification error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to create notification.",
+    });
+  }
+});
+
+app.post("/api/notifications/:id/read", authRequired, (req, res) => {
+  try {
+    const notification = db
+      .prepare("SELECT * FROM notifications WHERE id = ?")
+      .get(req.params.id);
+
+    if (!notification) {
+      return res.status(404).json({
+        success: false,
+        message: "Notification not found.",
+      });
+    }
+
+    const readAt = markNotificationRead(req.params.id, req.user.id);
+
+    res.json({
+      success: true,
+      readAt,
+    });
+  } catch (error) {
+    console.error("Mark notification read error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to mark notification as read.",
+    });
+  }
+});
+
+app.post("/api/notifications/mark-all-read", authRequired, (req, res) => {
+  try {
+    const notifications = getNotificationsForUser(req.user, 500);
+    const nowIST = getIndianTimestamp();
+
+    for (const notification of notifications) {
+      db.prepare(
+        `
+        INSERT INTO notification_reads (
+          notification_id,
+          user_id,
+          read_at
+        )
+        VALUES (?, ?, ?)
+        ON CONFLICT(notification_id, user_id)
+        DO UPDATE SET read_at = excluded.read_at
+      `
+      ).run(notification.id, req.user.id, nowIST);
+    }
+
+    res.json({
+      success: true,
+      marked: notifications.length,
+      readAt: nowIST,
+    });
+  } catch (error) {
+    console.error("Mark all notifications read error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to mark notifications as read.",
+    });
+  }
+});
+
+app.get("/api/recent-activity", authRequired, (req, res) => {
+  try {
+    const limit = Number(req.query.limit || 30);
+
+    let activity = [];
+
+    if (req.user.role === "employee") {
+      activity = getRecentActivityForUser(req.user, limit);
+    } else if (req.user.role === "manager") {
+      activity = db
+        .prepare(
+          `
+          SELECT *
+          FROM recent_activity
+          WHERE LOWER(COALESCE(department, '')) = LOWER(?)
+          ORDER BY created_at DESC, id DESC
+          LIMIT ?
+        `
+        )
+        .all(req.user.department, limit)
+        .map(normalizeRecentActivity)
+        .filter(Boolean);
+    } else {
+      activity = db
+        .prepare(
+          `
+          SELECT *
+          FROM recent_activity
+          ORDER BY created_at DESC, id DESC
+          LIMIT ?
+        `
+        )
+        .all(limit)
+        .map(normalizeRecentActivity)
+        .filter(Boolean);
+    }
+
+    res.json({
+      success: true,
+      total: activity.length,
+      activity,
+      recentActivity: activity,
+    });
+  } catch (error) {
+    console.error("Get recent activity error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load recent activity.",
+    });
+  }
+});
+
+app.get("/api/employee/overview", authRequired, (req, res) => {
+  try {
+    if (req.user.role !== "employee") {
+      return res.status(403).json({
+        success: false,
+        message: "Employee overview is only available to employees.",
+      });
+    }
+
+    ensureAutoCheckOut(req.user);
+
+    const projects = buildEmployeeProjectCards(req.user);
+    const activeProjects = projects.filter(
+      (project) =>
+        String(project.status || "active").toLowerCase() !== "deleted" &&
+        Number(project.progress || 0) < 100
     );
 
-  const notification = db
-    .prepare("SELECT * FROM notifications WHERE id = ?")
-    .get(result.lastInsertRowid);
+    const progress = buildEmployeeProgress(req.user.id);
+    const attendanceSummary = getEmployeeAttendanceSummary(req.user.id);
+    const notifications = getNotificationsForUser(req.user, 8);
+    const recentActivity = getRecentActivityForUser(req.user, 12);
 
-  res.json({
-    success: true,
-    notification,
-  });
+    res.json({
+      success: true,
+      user: normalizeUser(req.user),
+      projects,
+      activeProjects,
+      tasks: progress.tasks,
+      progress,
+      overallProgress: progress.progress,
+      attendanceSummary,
+      attendance: attendanceSummary,
+      notifications,
+      unreadNotifications: notifications.filter((item) => !item.isRead).length,
+      recentActivity,
+    });
+  } catch (error) {
+    console.error("Employee overview error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load employee overview.",
+    });
+  }
 });
+
+app.get("/api/search", authRequired, (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim().toLowerCase();
+
+    if (!q) {
+      return res.json({
+        success: true,
+        query: "",
+        results: {
+          users: [],
+          projects: [],
+          tasks: [],
+          activity: [],
+        },
+      });
+    }
+
+    const like = `%${q}%`;
+
+    let users = [];
+    let projects = [];
+    let tasks = [];
+    let activity = [];
+
+    if (req.user.role === "employee") {
+      projects = buildEmployeeProjectCards(req.user).filter((project) => {
+        const haystack = [
+          project.name,
+          project.description,
+          project.department,
+          project.status,
+          project.priority,
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(q);
+      });
+
+      tasks = getAssignedTasksForEmployee(req.user.id).filter((task) => {
+        const haystack = [
+          task.title,
+          task.description,
+          task.status,
+          task.priority,
+          task.project_name,
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(q);
+      });
+
+      activity = getRecentActivityForUser(req.user, 50).filter((item) => {
+        const haystack = [item.title, item.message, item.actionType]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(q);
+      });
+    } else {
+      if (req.user.role === "superAdmin") {
+        users = db
+          .prepare(
+            `
+            SELECT *
+            FROM users
+            WHERE LOWER(COALESCE(name, '')) LIKE ?
+               OR LOWER(COALESCE(email, '')) LIKE ?
+               OR LOWER(COALESCE(department, '')) LIKE ?
+               OR LOWER(COALESCE(role, '')) LIKE ?
+            ORDER BY name ASC
+            LIMIT 50
+          `
+          )
+          .all(like, like, like, like)
+          .map(normalizeUser);
+      } else {
+        users = db
+          .prepare(
+            `
+            SELECT *
+            FROM users
+            WHERE role != 'superAdmin'
+              AND (
+                LOWER(COALESCE(name, '')) LIKE ?
+                OR LOWER(COALESCE(email, '')) LIKE ?
+                OR LOWER(COALESCE(department, '')) LIKE ?
+                OR LOWER(COALESCE(role, '')) LIKE ?
+              )
+            ORDER BY name ASC
+            LIMIT 50
+          `
+          )
+          .all(like, like, like, like)
+          .map(normalizeUser);
+      }
+
+      projects = db
+        .prepare(
+          `
+          SELECT *
+          FROM projects
+          WHERE COALESCE(status, 'active') != 'deleted'
+            AND (
+              LOWER(COALESCE(name, '')) LIKE ?
+              OR LOWER(COALESCE(description, '')) LIKE ?
+              OR LOWER(COALESCE(department, '')) LIKE ?
+              OR LOWER(COALESCE(status, '')) LIKE ?
+            )
+          ORDER BY created_at DESC
+          LIMIT 50
+        `
+        )
+        .all(like, like, like, like)
+        .map(normalizeProject);
+
+      tasks = db
+        .prepare(
+          `
+          SELECT *
+          FROM tasks
+          WHERE LOWER(COALESCE(title, '')) LIKE ?
+             OR LOWER(COALESCE(description, '')) LIKE ?
+             OR LOWER(COALESCE(status, '')) LIKE ?
+             OR LOWER(COALESCE(priority, '')) LIKE ?
+          ORDER BY created_at DESC
+          LIMIT 50
+        `
+        )
+        .all(like, like, like, like);
+    }
+
+    res.json({
+      success: true,
+      query: q,
+      results: {
+        users,
+        projects,
+        tasks,
+        activity,
+      },
+    });
+  } catch (error) {
+    console.error("Search error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Search failed.",
+    });
+  }
+});
+
 
 /* ---------------- PROJECT CHAT ---------------- */
 
@@ -3811,7 +6764,1689 @@ app.get("/api/activity-logs", authRequired, (req, res) => {
   });
 });
 
-/* ---------------- FALLBACK - ALWAYS LAST ---------------- */
+/* ---------------- ACCOUNT ADMINISTRATOR ---------------- */
+
+app.use(
+  "/api/account-administrator",
+  createAccountAdministratorRoutes({
+    db,
+    authenticateToken: authRequired,
+  })
+);
+
+/* ---------------- EMPLOYEE MY PROJECTS - FINAL PERMANENT ROUTE ---------------- */
+
+function employeeProjectsClean(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function employeeProjectsParseMembers(value) {
+  if (!value) return [];
+
+  if (Array.isArray(value)) return value;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+
+    if (!trimmed) return [];
+
+    try {
+      const parsed = JSON.parse(trimmed);
+
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === "object") return [parsed];
+
+      return [];
+    } catch {
+      return trimmed
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+  }
+
+  if (typeof value === "object") return [value];
+
+  return [value];
+}
+
+function employeeProjectsGetUserFromDb(reqUser) {
+  if (!reqUser?.id) return reqUser;
+
+  const user = db
+    .prepare(
+      `
+      SELECT id, name, email, role, department
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `
+    )
+    .get(reqUser.id);
+
+  return user || reqUser;
+}
+
+function employeeProjectsNormalizeProject(row) {
+  const members = employeeProjectsParseMembers(row.members);
+
+  return {
+    ...row,
+
+    id: row.id,
+    name: row.name || "",
+    title: row.name || "",
+    projectName: row.name || "",
+
+    description: row.description || "",
+
+    department: row.department || "",
+    division: row.department || "",
+    departmentName: row.department || "",
+
+    status: row.status || "active",
+    priority: row.priority || "medium",
+    progress: Number(row.progress || 0),
+
+    managerId: row.manager_id || "",
+    manager_id: row.manager_id || "",
+
+    startDate: row.start_date || "",
+    start_date: row.start_date || "",
+
+    endDate: row.end_date || "",
+    end_date: row.end_date || "",
+    deadline: row.end_date || "",
+
+    members,
+    member: members,
+    assignedMembers: members,
+    assigned_members: members,
+    assignedUsers: members,
+    assigned_users: members,
+    assignedEmployees: members,
+    assigned_employees: members,
+    users: members,
+    employees: members,
+
+    createdBy: row.created_by || "",
+    created_by: row.created_by || "",
+    createdAt: row.created_at || "",
+    created_at: row.created_at || "",
+    updatedAt: row.updated_at || "",
+    updated_at: row.updated_at || "",
+  };
+}
+
+app.get("/api/my-projects", authRequired, (req, res) => {
+  try {
+    const user = employeeProjectsGetUserFromDb(req.user);
+
+    const userId = String(user?.id || "").trim();
+    const userEmail = employeeProjectsClean(user?.email);
+    const userName = employeeProjectsClean(user?.name);
+
+    const allProjects = db
+      .prepare(
+        `
+        SELECT *
+        FROM projects
+        WHERE COALESCE(status, 'active') != 'deleted'
+        ORDER BY created_at DESC
+      `
+      )
+      .all();
+
+    const assignedProjects = allProjects.filter((project) => {
+      const projectText = employeeProjectsClean(JSON.stringify(project || {}));
+      const membersText = employeeProjectsClean(project.members || "");
+
+      const emailMatch =
+        userEmail &&
+        (projectText.includes(userEmail) || membersText.includes(userEmail));
+
+      const nameMatch =
+        userName &&
+        (projectText.includes(userName) || membersText.includes(userName));
+
+      const idMatch =
+        userId &&
+        (
+          projectText.includes(`"id":"${userId}"`) ||
+          projectText.includes(`"id":${userId}`) ||
+          projectText.includes(`"uid":"${userId}"`) ||
+          projectText.includes(`"uid":${userId}`) ||
+          projectText.includes(`"userid":"${userId}"`) ||
+          projectText.includes(`"userid":${userId}`) ||
+          projectText.includes(`"user_id":"${userId}"`) ||
+          projectText.includes(`"user_id":${userId}`) ||
+          projectText.includes(`"employeeid":"${userId}"`) ||
+          projectText.includes(`"employeeid":${userId}`) ||
+          projectText.includes(`"employee_id":"${userId}"`) ||
+          projectText.includes(`"employee_id":${userId}`) ||
+          membersText.includes(`"${userId}"`)
+        );
+
+      if (emailMatch || nameMatch || idMatch) {
+        return true;
+      }
+
+      const taskMatch = db
+        .prepare(
+          `
+          SELECT id
+          FROM tasks
+          WHERE project_id = ?
+            AND CAST(assigned_to AS TEXT) = CAST(? AS TEXT)
+          LIMIT 1
+        `
+        )
+        .get(project.id, userId);
+
+      return Boolean(taskMatch);
+    });
+
+    console.log("MY PROJECTS FINAL ROUTE:", {
+      userId,
+      userEmail,
+      userName,
+      returned: assignedProjects.map((project) => project.name),
+    });
+
+    res.json({
+      success: true,
+      projects: assignedProjects.map(employeeProjectsNormalizeProject),
+    });
+  } catch (error) {
+    console.error("My projects final route error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load assigned projects.",
+    });
+  }
+});
+
+/* ---------------- EMPLOYEE ASSIGNED PROJECTS ---------------- */
+
+app.get("/api/employee-assigned-projects", authRequired, (req, res) => {
+  try {
+    if (req.user.role !== "employee") {
+      return res.status(403).json({
+        success: false,
+        message: "This route is only for employee assigned projects.",
+      });
+    }
+
+    const projects = buildEmployeeProjectCards(req.user);
+
+    res.json({
+      success: true,
+      total: projects.length,
+      projects,
+    });
+  } catch (error) {
+    console.error("Employee assigned projects error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load employee assigned projects.",
+    });
+  }
+});
+
+/* ---------------- EMPLOYEE PROJECT TASKS - FINAL FIX ---------------- */
+
+function employeeTaskClean(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function employeeTaskGetUserKeys(user) {
+  const fullName = employeeTaskClean(user?.name);
+  const firstName = fullName.split(" ")[0] || "";
+
+  return [
+    user?.id,
+    user?._id,
+    user?.uid,
+    user?.userId,
+    user?.user_id,
+    user?.employeeId,
+    user?.employee_id,
+    user?.email,
+    user?.name,
+    firstName,
+  ]
+    .filter(Boolean)
+    .map(employeeTaskClean);
+}
+
+function employeeTaskBelongsToProject(task, projectId) {
+  const possibleProjectIds = [
+    task.project_id,
+    task.projectId,
+    task.projectID,
+    task.parent_project_id,
+    task.parentProjectId,
+  ]
+    .filter(Boolean)
+    .map((value) => String(value).trim());
+
+  return possibleProjectIds.includes(String(projectId).trim());
+}
+
+function employeeTaskMatchesUser(task, userKeys) {
+  const taskText = employeeTaskClean(JSON.stringify(task || {}));
+
+  const assignedValues = [
+    task.assigned_to,
+    task.assignedTo,
+    task.assigned_to_id,
+    task.assignedToId,
+    task.assignee,
+    task.assignee_id,
+    task.assigneeId,
+    task.employee_id,
+    task.employeeId,
+    task.user_id,
+    task.userId,
+    task.assigned_user,
+    task.assignedUser,
+    task.assigned_employee,
+    task.assignedEmployee,
+  ]
+    .filter(Boolean)
+    .map(employeeTaskClean);
+
+  return userKeys.some((key) => {
+    if (!key) return false;
+
+    return assignedValues.includes(key) || taskText.includes(key);
+  });
+}
+
+function employeeTaskNormalize(task) {
+  const title =
+    task.title ||
+    task.name ||
+    task.task ||
+    task.task_name ||
+    task.description ||
+    "Untitled Task";
+
+  return {
+    ...task,
+
+    id: task.id,
+    title,
+    name: title,
+
+    description: task.description || task.details || "",
+
+    projectId: task.project_id || task.projectId || task.projectID,
+    project_id: task.project_id || task.projectId || task.projectID,
+
+    status: task.status || task.task_status || "Pending",
+    priority: task.priority || task.task_priority || "Medium",
+
+    startDate: task.start_date || task.startDate || task.created_at || "",
+    start_date: task.start_date || task.startDate || task.created_at || "",
+
+    endDate:
+      task.end_date ||
+      task.endDate ||
+      task.due_date ||
+      task.dueDate ||
+      task.deadline ||
+      "",
+    end_date:
+      task.end_date ||
+      task.endDate ||
+      task.due_date ||
+      task.dueDate ||
+      task.deadline ||
+      "",
+
+    assignedTo: task.assigned_to || task.assignedTo || task.assignee || "",
+    assigned_to: task.assigned_to || task.assignedTo || task.assignee || "",
+  };
+}
+
+app.get("/api/employee-project-tasks/:projectId", authRequired, (req, res) => {
+  try {
+    const projectId = String(req.params.projectId || "").trim();
+
+    const user =
+      db
+        .prepare(
+          `
+          SELECT id, name, email, role, department
+          FROM users
+          WHERE id = ?
+          LIMIT 1
+          `
+        )
+        .get(req.user.id) || req.user;
+
+    const userKeys = employeeTaskGetUserKeys(user);
+
+    const tables = db
+      .prepare(
+        `
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name IN ('tasks', 'project_tasks')
+        `
+      )
+      .all();
+
+    let allTasks = [];
+
+    for (const table of tables) {
+      const rows = db.prepare(`SELECT * FROM ${table.name}`).all();
+
+      allTasks = [
+        ...allTasks,
+        ...rows.map((row) => ({
+          ...row,
+          __taskTable: table.name,
+        })),
+      ];
+    }
+
+    const assignedTasks = allTasks.filter((task) => {
+      return (
+        employeeTaskBelongsToProject(task, projectId) &&
+        employeeTaskMatchesUser(task, userKeys)
+      );
+    });
+
+    console.log("EMPLOYEE PROJECT TASKS FINAL:", {
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      projectId,
+      returned: assignedTasks.map(
+        (task) => task.title || task.name || task.task || task.description
+      ),
+    });
+
+    res.json({
+      success: true,
+      tasks: assignedTasks.map(employeeTaskNormalize),
+    });
+  } catch (error) {
+    console.error("Employee project tasks final error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load employee assigned tasks.",
+    });
+  }
+});
+
+/* ---------------- CHAT / MESSAGING ---------------- */
+
+const CHAT_UPLOAD_DIR = path.join(__dirname, "uploads", "chat-attachments");
+
+fs.mkdirSync(CHAT_UPLOAD_DIR, { recursive: true });
+
+const ALLOWED_CHAT_ATTACHMENT_TYPES = new Set([
+  "application/pdf",
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+
+const chatAttachmentStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, CHAT_UPLOAD_DIR);
+  },
+  filename: (req, file, cb) => {
+    const safeName = String(file.originalname || "attachment")
+      .replace(/[^\w.\-() ]+/g, "_")
+      .replace(/\s+/g, "_");
+
+    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}-${safeName}`);
+  },
+});
+
+const chatUpload = multer({
+  storage: chatAttachmentStorage,
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    if (!ALLOWED_CHAT_ATTACHMENT_TYPES.has(file.mimetype)) {
+      cb(
+        new Error(
+          "Unsupported file type. Please upload PDF, JPG, PNG, DOC, or DOCX."
+        )
+      );
+      return;
+    }
+
+    cb(null, true);
+  },
+});
+
+function uploadChatAttachment(req, res, next) {
+  chatUpload.single("attachment")(req, res, (error) => {
+    if (!error) {
+      next();
+      return;
+    }
+
+    const message =
+      error.code === "LIMIT_FILE_SIZE"
+        ? "Attachment must be 5MB or smaller."
+        : error.message || "Attachment upload failed.";
+
+    res.status(400).json({
+      success: false,
+      message,
+    });
+  });
+}
+
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_id INTEGER NOT NULL,
+    receiver_id INTEGER NOT NULL,
+    message_text TEXT DEFAULT '',
+    attachment_filename TEXT DEFAULT '',
+    attachment_original_name TEXT DEFAULT '',
+    attachment_path TEXT DEFAULT '',
+    attachment_mime_type TEXT DEFAULT '',
+    attachment_size INTEGER DEFAULT 0,
+    is_read INTEGER DEFAULT 0,
+    created_at TEXT,
+    updated_at TEXT
+  )
+`).run();
+
+function ensureChatColumn(table, column, definition) {
+  try {
+    const columns = db
+      .prepare(`PRAGMA table_info(${table})`)
+      .all()
+      .map((item) => item.name);
+
+    if (!columns.includes(column)) {
+      db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+    }
+  } catch (error) {
+    console.warn(`Could not ensure ${table}.${column}:`, error.message);
+  }
+}
+
+ensureChatColumn("chat_messages", "sender_id", "INTEGER");
+ensureChatColumn("chat_messages", "receiver_id", "INTEGER");
+ensureChatColumn("chat_messages", "message_text", "TEXT DEFAULT ''");
+ensureChatColumn("chat_messages", "attachment_filename", "TEXT DEFAULT ''");
+ensureChatColumn("chat_messages", "attachment_original_name", "TEXT DEFAULT ''");
+ensureChatColumn("chat_messages", "attachment_path", "TEXT DEFAULT ''");
+ensureChatColumn("chat_messages", "attachment_mime_type", "TEXT DEFAULT ''");
+ensureChatColumn("chat_messages", "attachment_size", "INTEGER DEFAULT 0");
+ensureChatColumn("chat_messages", "is_read", "INTEGER DEFAULT 0");
+ensureChatColumn("chat_messages", "created_at", "TEXT");
+ensureChatColumn("chat_messages", "updated_at", "TEXT");
+
+function getChatTimestamp() {
+  if (typeof getIndianTimestamp === "function") {
+    return getIndianTimestamp();
+  }
+
+  return new Date().toISOString();
+}
+
+function normalizeChatText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getDepartmentsMapForChat() {
+  const map = new Map();
+
+  try {
+    const departments = db.prepare("SELECT * FROM departments").all();
+
+    departments.forEach((department) => {
+      const id = String(
+        department.id ||
+          department.department_id ||
+          department.departmentId ||
+          ""
+      );
+
+      const name =
+        department.name ||
+        department.title ||
+        department.departmentName ||
+        department.department_name ||
+        department.division ||
+        "";
+
+      if (id) {
+        map.set(id, name);
+      }
+    });
+  } catch {
+    // departments table may not exist
+  }
+
+  return map;
+}
+
+function getAllUsersWithDepartmentForChat() {
+  const departmentsMap = getDepartmentsMapForChat();
+
+  const users = db
+    .prepare(
+      `
+      SELECT *
+      FROM users
+      WHERE COALESCE(status, 'active') != 'deleted'
+      ORDER BY name COLLATE NOCASE ASC
+    `
+    )
+    .all();
+
+  return users.map((user) => {
+    const departmentId = String(
+      user.department_id ||
+        user.departmentId ||
+        user.division_id ||
+        user.divisionId ||
+        ""
+    );
+
+    const joinedDepartment = departmentId ? departmentsMap.get(departmentId) : "";
+
+    return {
+      ...user,
+      chat_department:
+        user.department ||
+        user.departmentName ||
+        user.department_name ||
+        user.division ||
+        user.divisionName ||
+        user.division_name ||
+        joinedDepartment ||
+        "",
+    };
+  });
+}
+
+function isSoftwareChatUser(user) {
+  const department = normalizeChatText(
+    user.chat_department ||
+      user.department ||
+      user.departmentName ||
+      user.department_name ||
+      user.division ||
+      user.divisionName ||
+      user.division_name ||
+      ""
+  );
+
+  return department.includes("software");
+}
+
+function normalizeChatUserForResponse(user) {
+  if (!user) return null;
+
+  return {
+    id: String(user.id),
+    userId: String(user.id),
+    user_id: String(user.id),
+
+    name: user.name || user.full_name || user.fullName || user.email || "User",
+    email: user.email || "",
+
+    role: user.role || "employee",
+    designation: user.designation || user.position || "",
+
+    department:
+      user.chat_department ||
+      user.department ||
+      user.departmentName ||
+      user.department_name ||
+      user.division ||
+      "",
+  };
+}
+
+function getChatUserById(userId) {
+  const user = db
+    .prepare(
+      `
+      SELECT *
+      FROM users
+      WHERE CAST(id AS TEXT) = CAST(? AS TEXT)
+      LIMIT 1
+    `
+    )
+    .get(String(userId));
+
+  if (!user) return null;
+
+  const departmentsMap = getDepartmentsMapForChat();
+
+  const departmentId = String(
+    user.department_id ||
+      user.departmentId ||
+      user.division_id ||
+      user.divisionId ||
+      ""
+  );
+
+  const joinedDepartment = departmentId ? departmentsMap.get(departmentId) : "";
+
+  return {
+    ...user,
+    chat_department:
+      user.department ||
+      user.departmentName ||
+      user.department_name ||
+      user.division ||
+      joinedDepartment ||
+      "",
+  };
+}
+
+function normalizeChatMessageForResponse(message, currentUserId) {
+  if (!message) return null;
+
+  const sender = getChatUserById(message.sender_id);
+  const receiver = getChatUserById(message.receiver_id);
+
+  const hasAttachment = Boolean(message.attachment_path);
+
+  return {
+    ...message,
+
+    id: String(message.id),
+    messageId: String(message.id),
+    message_id: String(message.id),
+
+    senderId: String(message.sender_id),
+    sender_id: String(message.sender_id),
+
+    receiverId: String(message.receiver_id),
+    receiver_id: String(message.receiver_id),
+
+    text: message.message_text || "",
+    messageText: message.message_text || "",
+    message_text: message.message_text || "",
+
+    mine: String(message.sender_id) === String(currentUserId),
+
+    sender: sender ? normalizeChatUserForResponse(sender) : null,
+    receiver: receiver ? normalizeChatUserForResponse(receiver) : null,
+
+    senderName: sender?.name || "User",
+    sender_name: sender?.name || "User",
+
+    receiverName: receiver?.name || "User",
+    receiver_name: receiver?.name || "User",
+
+    hasAttachment,
+
+    attachmentFilename: message.attachment_filename || "",
+    attachment_filename: message.attachment_filename || "",
+
+    attachmentOriginalName: message.attachment_original_name || "",
+    attachment_original_name: message.attachment_original_name || "",
+
+    attachmentMimeType: message.attachment_mime_type || "",
+    attachment_mime_type: message.attachment_mime_type || "",
+
+    attachmentSize: Number(message.attachment_size || 0),
+    attachment_size: Number(message.attachment_size || 0),
+
+    attachmentUrl: hasAttachment
+      ? `/api/chat/messages/${message.id}/attachment`
+      : "",
+
+    isRead: Number(message.is_read || 0) === 1,
+    is_read: Number(message.is_read || 0) === 1,
+
+    createdAt: message.created_at || "",
+    created_at: message.created_at || "",
+
+    updatedAt: message.updated_at || "",
+    updated_at: message.updated_at || "",
+  };
+}
+
+function userCanAccessChatMessage(user, message) {
+  if (!user || !message) return false;
+
+  return (
+    String(message.sender_id) === String(user.id) ||
+    String(message.receiver_id) === String(user.id)
+  );
+}
+
+function insertChatNotification({ receiverId, senderName, messageText, messageId, senderId }) {
+  try {
+    if (typeof createNotification === "function") {
+      createNotification({
+        title: `New message from ${senderName}`,
+        message: messageText || "Sent you an attachment.",
+        severity: "info",
+        targetType: "User",
+        userId: receiverId,
+        department: "",
+        entityType: "chat",
+        entityId: messageId,
+        createdBy: senderId || null,
+      });
+    }
+
+    if (typeof recordEmployeeActivity === "function") {
+      recordEmployeeActivity({
+        userId: receiverId,
+        role: "",
+        department: "",
+        actionType: "chat_message",
+        title: `New message from ${senderName}`,
+        message: messageText || "Sent you an attachment.",
+        entityType: "chat",
+        entityId: messageId,
+        createdBy: senderId || null,
+      });
+    }
+  } catch (error) {
+    console.warn("Chat notification/activity skipped:", error.message);
+  }
+}
+
+app.get("/api/chat/users", authRequired, (req, res) => {
+  try {
+    const users = getAllUsersWithDepartmentForChat()
+      .filter((user) => String(user.id) !== String(req.user.id))
+      .filter(isSoftwareChatUser)
+      .map(normalizeChatUserForResponse)
+      .filter(Boolean);
+
+    console.log("CHAT USERS RETURNED:", {
+      currentUser: req.user.email,
+      count: users.length,
+      users: users.map((user) => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        department: user.department,
+      })),
+    });
+
+    res.json({
+      success: true,
+      users,
+      people: users,
+    });
+  } catch (error) {
+    console.error("Get chat users error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load chat users.",
+    });
+  }
+});
+
+app.get("/api/chat/conversations", authRequired, (req, res) => {
+  try {
+    const rows = db
+      .prepare(
+        `
+        SELECT *
+        FROM chat_messages
+        WHERE CAST(sender_id AS TEXT) = CAST(? AS TEXT)
+           OR CAST(receiver_id AS TEXT) = CAST(? AS TEXT)
+        ORDER BY created_at DESC, id DESC
+      `
+      )
+      .all(req.user.id, req.user.id);
+
+    const map = new Map();
+
+    rows.forEach((message) => {
+      const partnerId =
+        String(message.sender_id) === String(req.user.id)
+          ? String(message.receiver_id)
+          : String(message.sender_id);
+
+      if (!map.has(partnerId)) {
+        const partner = getChatUserById(partnerId);
+
+        if (partner && isSoftwareChatUser(partner)) {
+          map.set(partnerId, {
+            user: normalizeChatUserForResponse(partner),
+            latestMessage: normalizeChatMessageForResponse(message, req.user.id),
+          });
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      conversations: Array.from(map.values()),
+    });
+  } catch (error) {
+    console.error("Get chat conversations error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load conversations.",
+    });
+  }
+});
+
+app.get("/api/chat/messages/:receiverId", authRequired, (req, res) => {
+  try {
+    const receiver = getChatUserById(req.params.receiverId);
+
+    if (!receiver) {
+      return res.status(404).json({
+        success: false,
+        message: "Receiver not found.",
+      });
+    }
+
+    if (!isSoftwareChatUser(receiver)) {
+      return res.status(403).json({
+        success: false,
+        message: "Chat is only available for Software department users.",
+      });
+    }
+
+    db.prepare(
+      `
+      UPDATE chat_messages
+      SET is_read = 1
+      WHERE CAST(sender_id AS TEXT) = CAST(? AS TEXT)
+        AND CAST(receiver_id AS TEXT) = CAST(? AS TEXT)
+    `
+    ).run(receiver.id, req.user.id);
+
+    const messages = db
+      .prepare(
+        `
+        SELECT *
+        FROM chat_messages
+        WHERE (
+          CAST(sender_id AS TEXT) = CAST(? AS TEXT)
+          AND CAST(receiver_id AS TEXT) = CAST(? AS TEXT)
+        )
+        OR (
+          CAST(sender_id AS TEXT) = CAST(? AS TEXT)
+          AND CAST(receiver_id AS TEXT) = CAST(? AS TEXT)
+        )
+        ORDER BY created_at ASC, id ASC
+      `
+      )
+      .all(req.user.id, receiver.id, receiver.id, req.user.id)
+      .map((message) => normalizeChatMessageForResponse(message, req.user.id))
+      .filter(Boolean);
+
+    res.json({
+      success: true,
+      messages,
+    });
+  } catch (error) {
+    console.error("Get chat messages error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load messages.",
+    });
+  }
+});
+
+app.post(
+  "/api/chat/messages",
+  authRequired,
+  uploadChatAttachment,
+  (req, res) => {
+    try {
+      const body = req.body || {};
+
+      const receiverId =
+        body.receiverId ||
+        body.receiver_id ||
+        body.toUserId ||
+        body.to_user_id ||
+        "";
+
+      const messageText = String(
+        body.messageText || body.message_text || body.text || ""
+      ).trim();
+
+      if (!receiverId) {
+        return res.status(400).json({
+          success: false,
+          message: "Receiver is required.",
+        });
+      }
+
+      if (!messageText && !req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "Type a message or attach a file.",
+        });
+      }
+
+      const receiver = getChatUserById(receiverId);
+
+      if (!receiver) {
+        return res.status(404).json({
+          success: false,
+          message: "Receiver not found.",
+        });
+      }
+
+      if (!isSoftwareChatUser(receiver)) {
+        return res.status(403).json({
+          success: false,
+          message: "Chat is only available for Software department users.",
+        });
+      }
+
+      if (String(receiver.id) === String(req.user.id)) {
+        return res.status(400).json({
+          success: false,
+          message: "You cannot send a message to yourself.",
+        });
+      }
+
+      const now = getChatTimestamp();
+      const file = req.file || null;
+
+      const result = db
+        .prepare(
+          `
+          INSERT INTO chat_messages (
+            sender_id,
+            receiver_id,
+            message_text,
+            attachment_filename,
+            attachment_original_name,
+            attachment_path,
+            attachment_mime_type,
+            attachment_size,
+            is_read,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+        )
+        .run(
+          req.user.id,
+          receiver.id,
+          messageText,
+          file?.filename || "",
+          file?.originalname || "",
+          file?.path || "",
+          file?.mimetype || "",
+          file?.size || 0,
+          0,
+          now,
+          now
+        );
+
+      const message = db
+        .prepare("SELECT * FROM chat_messages WHERE id = ?")
+        .get(result.lastInsertRowid);
+
+      insertChatNotification({
+        receiverId: receiver.id,
+        senderName: req.user.name || req.user.email || "Someone",
+        messageText,
+        messageId: message.id,
+        senderId: req.user.id,
+      });
+
+      res.json({
+        success: true,
+        message: normalizeChatMessageForResponse(message, req.user.id),
+      });
+    } catch (error) {
+      console.error("Send chat message error:", error);
+
+      if (req.file?.path) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch {
+          // ignore cleanup failure
+        }
+      }
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to send message.",
+      });
+    }
+  }
+);
+
+app.get("/api/chat/messages/:messageId/attachment", authRequired, (req, res) => {
+  try {
+    const message = db
+      .prepare("SELECT * FROM chat_messages WHERE id = ?")
+      .get(req.params.messageId);
+
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found.",
+      });
+    }
+
+    if (!userCanAccessChatMessage(req.user, message)) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot access this attachment.",
+      });
+    }
+
+    if (!message.attachment_path) {
+      return res.status(404).json({
+        success: false,
+        message: "No attachment found for this message.",
+      });
+    }
+
+    if (!fs.existsSync(message.attachment_path)) {
+      return res.status(404).json({
+        success: false,
+        message: "Attachment file is missing from server.",
+      });
+    }
+
+    res.download(
+      message.attachment_path,
+      message.attachment_original_name ||
+        message.attachment_filename ||
+        "chat-attachment"
+    );
+  } catch (error) {
+    console.error("Download chat attachment error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to download attachment.",
+    });
+  }
+});
+
+/* ---------------- CSV IMPORT - JAY MORE ONLY ---------------- */
+
+app.post("/api/admin/import-users-csv", authRequired, async (req, res) => {
+  try {
+    const requesterEmail = String(req.user?.email || "")
+      .trim()
+      .toLowerCase();
+
+    const requesterRole = String(req.user?.role || "")
+      .trim()
+      .toLowerCase();
+
+    const isJayMore =
+      requesterEmail === "jay.more@valencianutrition.com" &&
+      requesterRole === "employee";
+
+    if (!isJayMore) {
+      return res.status(403).json({
+        success: false,
+        message: "Only Jay More is allowed to import CSV files.",
+      });
+    }
+
+    const users = Array.isArray(req.body.users) ? req.body.users : [];
+
+    if (!users.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No users received from CSV.",
+      });
+    }
+
+    function normalizeCsvRole(value) {
+      const role = String(value || "employee")
+        .trim()
+        .toLowerCase()
+        .replaceAll(" ", "")
+        .replaceAll("_", "")
+        .replaceAll("-", "");
+
+      if (role === "superadmin") return "superAdmin";
+      if (role === "admin") return "admin";
+      if (role === "manager") return "manager";
+      if (role === "employee") return "employee";
+
+      return "";
+    }
+
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    const errors = [];
+
+    for (const [index, csvUser] of users.entries()) {
+      const rowNumber = index + 2;
+
+      const name = String(csvUser.name || "").trim();
+      const email = String(csvUser.email || "").trim().toLowerCase();
+      const password = String(csvUser.password || "").trim();
+      const role = normalizeCsvRole(csvUser.role);
+      const department = String(csvUser.department || "").trim();
+      const phone = String(csvUser.phone || "").trim();
+
+      if (!name || !email || !password || !role) {
+        skipped += 1;
+        errors.push(`Row ${rowNumber}: Missing name, email, password, or role.`);
+        continue;
+      }
+
+      if (!email.includes("@")) {
+        skipped += 1;
+        errors.push(`Row ${rowNumber}: Invalid email.`);
+        continue;
+      }
+
+      if (phone && !/^\d{10}$/.test(phone)) {
+        skipped += 1;
+        errors.push(`Row ${rowNumber}: Phone number must be 10 digits.`);
+        continue;
+      }
+
+      const nowIST = getIndianTimestamp();
+      const passwordHash = await bcrypt.hash(password, 10);
+
+      const existingUser = db
+        .prepare("SELECT * FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1")
+        .get(email);
+
+      if (existingUser) {
+        db.prepare(
+          `
+          UPDATE users
+          SET name = ?,
+              phone = ?,
+              password_hash = ?,
+              role = ?,
+              department = ?,
+              designation = ?,
+              status = ?,
+              updated_at = ?
+          WHERE id = ?
+        `
+        ).run(
+          name,
+          phone || existingUser.phone || "",
+          passwordHash,
+          role,
+          department || existingUser.department || "Sales team",
+          existingUser.designation || "Team Member",
+          existingUser.status || "active",
+          nowIST,
+          existingUser.id
+        );
+
+        updated += 1;
+      } else {
+        db.prepare(
+          `
+          INSERT INTO users (
+            name,
+            email,
+            phone,
+            password_hash,
+            role,
+            department,
+            designation,
+            status,
+            profile_image,
+            office_location,
+            created_at,
+            updated_at,
+            last_login_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+        ).run(
+          name,
+          email,
+          phone,
+          passwordHash,
+          role,
+          department || "Sales team",
+          "Team Member",
+          "active",
+          "",
+          "Main Campus",
+          nowIST,
+          nowIST,
+          ""
+        );
+
+        created += 1;
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `CSV import complete. Created: ${created}, Updated: ${updated}, Skipped: ${skipped}`,
+      created,
+      updated,
+      skipped,
+      errors,
+    });
+  } catch (error) {
+    console.error("CSV import error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "CSV import failed.",
+      error: error.message,
+    });
+  }
+});
+
+/* ---------------- JAY MORE SOFTWARE EMPLOYEE MANAGEMENT ---------------- */
+
+function ensureJayUserColumn(column, definition) {
+  try {
+    const columns = db
+      .prepare("PRAGMA table_info(users)")
+      .all()
+      .map((item) => item.name);
+
+    if (!columns.includes(column)) {
+      db.prepare(`ALTER TABLE users ADD COLUMN ${column} ${definition}`).run();
+    }
+  } catch (error) {
+    console.warn(`Could not ensure users.${column}:`, error.message);
+  }
+}
+
+ensureJayUserColumn("status", "TEXT DEFAULT 'active'");
+ensureJayUserColumn("blocked_at", "TEXT");
+ensureJayUserColumn("deleted_at", "TEXT");
+ensureJayUserColumn("updated_at", "TEXT");
+
+function getJayTimestamp() {
+  if (typeof getIndianTimestamp === "function") {
+    return getIndianTimestamp();
+  }
+
+  return new Date().toISOString().slice(0, 19).replace("T", " ");
+}
+
+function normalizeJayText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeJayRole(role) {
+  return String(role || "")
+    .replaceAll("_", "")
+    .replaceAll("-", "")
+    .replaceAll(" ", "")
+    .toLowerCase();
+}
+
+function isJayMoreUser(user) {
+  return (
+    normalizeJayText(user?.email) === "jay.more@valencianutrition.com"
+  );
+}
+
+function requireJayMore(req, res, next) {
+  if (!req.user || !isJayMoreUser(req.user)) {
+    return res.status(403).json({
+      success: false,
+      message: "Only Jay More can access this employee section.",
+    });
+  }
+
+  next();
+}
+
+function getDepartmentNameMapForJay() {
+  const map = new Map();
+
+  try {
+    const departments = db.prepare("SELECT * FROM departments").all();
+
+    departments.forEach((department) => {
+      const id = String(
+        department.id ||
+          department.department_id ||
+          department.departmentId ||
+          ""
+      );
+
+      const name =
+        department.name ||
+        department.title ||
+        department.departmentName ||
+        department.department_name ||
+        department.division ||
+        "";
+
+      if (id) {
+        map.set(id, name);
+      }
+    });
+  } catch {
+    // departments table may not exist
+  }
+
+  return map;
+}
+
+function getJayUserDepartment(user) {
+  const departmentMap = getDepartmentNameMapForJay();
+
+  const departmentId = String(
+    user.department_id ||
+      user.departmentId ||
+      user.division_id ||
+      user.divisionId ||
+      ""
+  );
+
+  const joinedDepartment = departmentId ? departmentMap.get(departmentId) : "";
+
+  return (
+    user.department ||
+    user.departmentName ||
+    user.department_name ||
+    user.division ||
+    user.divisionName ||
+    user.division_name ||
+    joinedDepartment ||
+    ""
+  );
+}
+
+function isSoftwareDepartmentUser(user) {
+  const department = normalizeJayText(getJayUserDepartment(user));
+
+  return department.includes("software");
+}
+
+function normalizeJayEmployee(user) {
+  const status = normalizeJayText(user.status || "active");
+  const role = user.role || "employee";
+
+  return {
+    id: String(user.id),
+    userId: String(user.id),
+    name: user.name || user.full_name || user.fullName || user.email || "User",
+    email: user.email || "",
+    role,
+    department: getJayUserDepartment(user),
+    designation: user.designation || user.position || "",
+    status: status === "deleted" ? "deleted" : status === "blocked" ? "blocked" : "active",
+    isBlocked: status === "blocked",
+    blockedAt: user.blocked_at || "",
+    deletedAt: user.deleted_at || "",
+    createdAt: user.created_at || user.createdAt || "",
+    updatedAt: user.updated_at || user.updatedAt || "",
+  };
+}
+
+app.get(
+  "/api/jay-more/software-employees",
+  authRequired,
+  requireJayMore,
+  (req, res) => {
+    try {
+      const users = db
+        .prepare(
+          `
+          SELECT *
+          FROM users
+          WHERE COALESCE(status, 'active') != 'deleted'
+          ORDER BY name COLLATE NOCASE ASC
+        `
+        )
+        .all()
+        .filter((user) => String(user.id) !== String(req.user.id))
+        .filter(isSoftwareDepartmentUser)
+        .map(normalizeJayEmployee);
+
+      res.json({
+        success: true,
+        employees: users,
+        users,
+      });
+    } catch (error) {
+      console.error("Jay software employees error:", error);
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to load software employees.",
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/jay-more/software-employees/:userId/block",
+  authRequired,
+  requireJayMore,
+  (req, res) => {
+    try {
+      const user = db
+        .prepare("SELECT * FROM users WHERE CAST(id AS TEXT) = CAST(? AS TEXT)")
+        .get(String(req.params.userId));
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "Employee not found.",
+        });
+      }
+
+      if (!isSoftwareDepartmentUser(user)) {
+        return res.status(403).json({
+          success: false,
+          message: "Only Software department users can be managed here.",
+        });
+      }
+
+      if (String(user.id) === String(req.user.id)) {
+        return res.status(400).json({
+          success: false,
+          message: "You cannot block yourself.",
+        });
+      }
+
+      const nextStatus =
+        normalizeJayText(user.status) === "blocked" ? "active" : "blocked";
+
+      db.prepare(
+        `
+        UPDATE users
+        SET status = ?,
+            blocked_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `
+      ).run(
+        nextStatus,
+        nextStatus === "blocked" ? getJayTimestamp() : "",
+        getJayTimestamp(),
+        user.id
+      );
+
+      const updated = db.prepare("SELECT * FROM users WHERE id = ?").get(user.id);
+
+      res.json({
+        success: true,
+        message:
+          nextStatus === "blocked"
+            ? "Employee blocked successfully."
+            : "Employee unblocked successfully.",
+        employee: normalizeJayEmployee(updated),
+      });
+    } catch (error) {
+      console.error("Jay block employee error:", error);
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to update employee status.",
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/jay-more/software-employees/:userId/reset-password",
+  authRequired,
+  requireJayMore,
+  async (req, res) => {
+    try {
+      const password = String(req.body?.password || "").trim();
+
+      if (!password || password.length < 6) {
+        return res.status(400).json({
+          success: false,
+          message: "Password must be at least 6 characters.",
+        });
+      }
+
+      const user = db
+        .prepare("SELECT * FROM users WHERE CAST(id AS TEXT) = CAST(? AS TEXT)")
+        .get(String(req.params.userId));
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "Employee not found.",
+        });
+      }
+
+      if (!isSoftwareDepartmentUser(user)) {
+        return res.status(403).json({
+          success: false,
+          message: "Only Software department users can be managed here.",
+        });
+      }
+
+      const passwordHash = await bcrypt.hash(password, 10);
+
+      const userColumns = db
+        .prepare("PRAGMA table_info(users)")
+        .all()
+        .map((column) => column.name);
+
+      if (userColumns.includes("password_hash")) {
+        db.prepare(
+          `
+          UPDATE users
+          SET password_hash = ?,
+              updated_at = ?
+          WHERE id = ?
+        `
+        ).run(passwordHash, getJayTimestamp(), user.id);
+      } else if (userColumns.includes("password")) {
+        db.prepare(
+          `
+          UPDATE users
+          SET password = ?,
+              updated_at = ?
+          WHERE id = ?
+        `
+        ).run(passwordHash, getJayTimestamp(), user.id);
+      } else {
+        return res.status(500).json({
+          success: false,
+          message: "No password column found in users table.",
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "Password reset successfully.",
+      });
+    } catch (error) {
+      console.error("Jay reset password error:", error);
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to reset password.",
+      });
+    }
+  }
+);
+
+app.delete(
+  "/api/jay-more/software-employees/:userId",
+  authRequired,
+  requireJayMore,
+  (req, res) => {
+    try {
+      const user = db
+        .prepare("SELECT * FROM users WHERE CAST(id AS TEXT) = CAST(? AS TEXT)")
+        .get(String(req.params.userId));
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "Employee not found.",
+        });
+      }
+
+      if (!isSoftwareDepartmentUser(user)) {
+        return res.status(403).json({
+          success: false,
+          message: "Only Software department users can be managed here.",
+        });
+      }
+
+      if (String(user.id) === String(req.user.id)) {
+        return res.status(400).json({
+          success: false,
+          message: "You cannot delete yourself.",
+        });
+      }
+
+      db.prepare(
+        `
+        UPDATE users
+        SET status = 'deleted',
+            deleted_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `
+      ).run(getJayTimestamp(), getJayTimestamp(), user.id);
+
+      res.json({
+        success: true,
+        message: "Employee deleted successfully.",
+      });
+    } catch (error) {
+      console.error("Jay delete employee error:", error);
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to delete employee.",
+      });
+    }
+  }
+);
+
 
 app.use((req, res) => {
   res.status(404).json({
@@ -3856,6 +8491,7 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000);
 
+
 app.listen(PORT, () => {
   console.log("--------------------------------------------------");
   console.log(`Valencia backend running on http://localhost:${PORT}`);
@@ -3873,6 +8509,7 @@ app.listen(PORT, () => {
   console.log("Task routes: Create, update, status, delete enabled");
   console.log("Subtask routes: Create, status, delete enabled");
   console.log("Leave request routes: Create, list, approve, reject enabled");
+  console.log("Chat routes: Software users, messages, attachments enabled");
   console.log("Project progress recalculation enabled");
   console.log("--------------------------------------------------");
 });

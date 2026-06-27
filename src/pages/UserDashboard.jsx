@@ -1,5 +1,4 @@
 import {
-  Bell,
   CalendarDays,
   CheckCircle2,
   ClipboardList,
@@ -308,7 +307,7 @@ function ProjectCard({ project, index }) {
         </h3>
 
         <span
-          className={`rounded-full px-4 py-1 text-[9px] font-black ${getPriorityClasses(
+          className={`rounded-full px-4 py-1 text-[9px] font-black uppercase ${getPriorityClasses(
             priority
           )}`}
         >
@@ -369,14 +368,14 @@ function OverallProgress({ projects }) {
             0
           ) / projects.length
         )
-      : 52;
+      : 0;
 
   const chartValues =
     projects.length > 0
       ? projects
           .slice(0, 6)
           .map((project) => Math.max(8, getProjectStats(project).progress))
-      : [58, 77, 90, 83, 68, 45];
+      : [0, 0, 0, 0, 0, 0];
 
   while (chartValues.length < 6) chartValues.push(0);
 
@@ -418,7 +417,11 @@ function OverallProgress({ projects }) {
                   style={{ height: `${value}%` }}
                 />
                 <span className="text-[11px] font-bold text-[#667085]">
-                  {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][index]}
+                  {projects[index]?.name
+                    ? `P${index + 1}`
+                    : index < projects.length
+                    ? `P${index + 1}`
+                    : "-"}
                 </span>
               </div>
             ))}
@@ -637,48 +640,24 @@ function NotificationsCard({ projects }) {
       subtitle:
         projects.length > 0
           ? `${getProjectTitle(projects[0], 0)} is due in 3 days`
-          : "Website design is due in 3 days",
-      time: "10m ago",
+          : "No urgent project deadlines",
+      time: "Today",
     },
     {
       id: 2,
       icon: CheckCircle2,
       color: "bg-[#e3fff0] text-[#28c76f]",
-      title: "New task assigned",
-      subtitle: "You were assigned...",
-      time: "1hr ago",
+      title: "Task reminder",
+      subtitle: "Check your assigned project tasks",
+      time: "Today",
     },
     {
       id: 3,
       icon: UsersRound,
       color: "bg-[#e5f1ff] text-[#4aa3ff]",
-      title: "Team meeting at 3 PM",
-      subtitle: "subtext...",
-      time: "3hr ago",
-    },
-    {
-      id: 4,
-      icon: CheckCircle2,
-      color: "bg-[#e3fff0] text-[#28c76f]",
-      title: "Leave request approved",
-      subtitle: "Your leave on June 20, 2026 has been approved",
-      time: "Yesterday",
-    },
-    {
-      id: 5,
-      icon: CalendarDays,
-      color: "bg-[#ffe4f2] text-[#ff5ca8]",
-      title: "Project Deadline coming up",
-      subtitle: "Website design is due in 10 days",
-      time: "3/06/2026",
-    },
-    {
-      id: 6,
-      icon: CheckCircle2,
-      color: "bg-[#e3fff0] text-[#28c76f]",
-      title: "Task completed",
-      subtitle: "One of your assigned tasks was marked complete",
-      time: "4/06/2026",
+      title: "Team update",
+      subtitle: "Stay connected with your team",
+      time: "Today",
     },
   ];
 
@@ -841,9 +820,9 @@ export default function UserDashboard() {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="flex h-[75px] flex-col items-center justify-center rounded-xl bg-[#ffb347] text-white shadow-[0_7px_22px_rgba(0,0,0,0.08)]">
-              <p className="text-[36px] font-light leading-none">96%</p>
+              <p className="text-[36px] font-light leading-none">0%</p>
               <p className="text-[15px] font-black leading-none">Attendance</p>
-              <p className="text-[10px] font-bold">this month</p>
+              <p className="text-[10px] font-bold">no data this month</p>
             </div>
 
             <div className="flex h-[75px] items-center justify-center rounded-xl bg-[#43a579] px-8 text-center text-[18px] font-serif font-black leading-tight text-white shadow-[0_7px_22px_rgba(0,0,0,0.08)]">

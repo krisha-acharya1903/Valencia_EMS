@@ -1,146 +1,165 @@
 import {
   CalendarDays,
+  ChevronLeft,
   Grid2X2,
   LogOut,
   MessageCircle,
   Moon,
   Sun,
-  UserRound,
+  User,
   UsersRound,
 } from "lucide-react";
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
-const menuItems = [
+const VALENCIA_LOGO_URL = "/valencia_logo.png";
+
+function getName(profile) {
+  return (
+    profile?.name ||
+    profile?.fullName ||
+    profile?.full_name ||
+    profile?.displayName ||
+    profile?.employeeName ||
+    "Employee"
+  );
+}
+
+function getEmail(profile) {
+  return profile?.email || "";
+}
+
+function getInitials(name) {
+  return String(name || "Employee")
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+const navItems = [
   {
     label: "Overview",
-    path: "/dashboard",
     icon: Grid2X2,
-    exact: true,
+    to: "/dashboard",
+    end: true,
   },
   {
     label: "Projects",
-    path: "/dashboard/projects",
     icon: UsersRound,
+    to: "/dashboard/projects",
   },
   {
     label: "Attendance",
-    path: "/dashboard/attendance",
     icon: CalendarDays,
+    to: "/dashboard/attendance",
   },
   {
     label: "Chatbox",
-    path: "/dashboard/chatbox",
     icon: MessageCircle,
+    to: "/dashboard/chatbox",
   },
   {
     label: "Profile",
-    path: "/dashboard/profile",
-    icon: UserRound,
+    icon: User,
+    to: "/dashboard/profile",
   },
 ];
 
-export default function Sidebar({ darkMode = false, onToggleDarkMode }) {
-  const location = useLocation();
+export default function UserSidebar() {
   const navigate = useNavigate();
   const { profile, logout } = useAuth();
 
-  const name = profile?.name || profile?.fullName || "Employee Name";
-  const email = profile?.email || "emp_name@valencia.com";
+  const [darkMode, setDarkMode] = useState(() => {
+    return localStorage.getItem("valencia_theme") === "dark";
+  });
 
-  const initials =
-    name
-      ?.split(" ")
-      ?.filter(Boolean)
-      ?.map((word) => word[0])
-      ?.join("")
-      ?.slice(0, 2)
-      ?.toUpperCase() || "SA";
+  const [logoFailed, setLogoFailed] = useState(false);
 
-  function isActive(item) {
-    if (item.exact) {
-      return location.pathname === item.path;
+  const name = useMemo(() => getName(profile), [profile]);
+  const email = useMemo(() => getEmail(profile), [profile]);
+  const initials = useMemo(() => getInitials(name), [name]);
+
+  useEffect(() => {
+    localStorage.setItem("valencia_theme", darkMode ? "dark" : "light");
+
+    if (darkMode) {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
     }
-
-    return (
-      location.pathname === item.path ||
-      location.pathname.startsWith(`${item.path}/`)
-    );
-  }
+  }, [darkMode]);
 
   async function handleLogout() {
     try {
-      if (logout) {
+      if (typeof logout === "function") {
         await logout();
       }
-    } catch {
-      // continue logout cleanup
+    } finally {
+      sessionStorage.removeItem("valencia_auth_token");
+      sessionStorage.removeItem("valencia_auth_user");
+      localStorage.removeItem("valencia_auth_token");
+      localStorage.removeItem("valencia_auth_user");
+
+      navigate("/login", { replace: true });
     }
-
-    sessionStorage.removeItem("valencia_auth_token");
-    sessionStorage.removeItem("valencia_auth_user");
-    localStorage.removeItem("valencia_auth_token");
-    localStorage.removeItem("valencia_auth_user");
-
-    navigate("/login", { replace: true });
   }
 
   return (
-    <aside
-      className={`fixed left-0 top-0 z-40 flex h-screen w-[255px] flex-col border-r ${
-        darkMode
-          ? "border-[#263244] bg-[#0f172a]"
-          : "border-[#eeeeee] bg-white"
-      }`}
-    >
-      <div
-        className={`flex h-[68px] items-center justify-between border-b px-4 ${
-          darkMode ? "border-[#263244]" : "border-[#eeeeee]"
-        }`}
-      >
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-orange-50 text-[22px] font-black text-[#FF6B35]">
-            V
+    <aside className="fixed left-0 top-0 z-40 flex h-screen w-[255px] flex-col border-r border-[#ededed] bg-white text-black">
+      <div className="flex h-[66px] items-center justify-between border-b border-[#ededed] px-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white">
+            {logoFailed ? (
+              <span className="text-[22px] font-black text-[#ff6b35]">V</span>
+            ) : (
+              <img
+                src={VALENCIA_LOGO_URL}
+                alt="Valencia Nutrition"
+                className="h-full w-full object-contain"
+                onError={() => setLogoFailed(true)}
+              />
+            )}
           </div>
 
-          <span className="text-[17px] font-bold leading-tight text-[#F0673A]">
-            Valencia
-            <br />
-            Nutritions
-          </span>
+          <div className="leading-tight">
+            <p className="text-[16px] font-black text-[#ff6b35]">Valencia</p>
+            <p className="text-[16px] font-black text-[#ff6b35]">
+              Nutritions
+            </p>
+          </div>
         </div>
 
         <button
           type="button"
-          className={`flex h-8 w-8 items-center justify-center rounded-full transition ${
-            darkMode
-              ? "text-slate-300 hover:bg-[#172033] hover:text-white"
-              : "text-[#1E1E1E] hover:bg-orange-50"
-          }`}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[#333] transition hover:bg-[#fff0ea] hover:text-[#ff6b35]"
         >
-          ‹
+          <ChevronLeft size={18} />
         </button>
       </div>
 
       <nav className="flex-1 px-3 py-8">
         <div className="space-y-2">
-          {menuItems.map((item) => {
+          {navItems.map((item) => {
             const Icon = item.icon;
-            const active = isActive(item);
 
             return (
               <NavLink
-                key={item.path}
-                to={item.path}
-                className={`flex h-[38px] items-center gap-3 rounded-lg px-4 text-[15px] font-semibold transition ${
-                  active
-                    ? "bg-[#FF6B35] text-white"
-                    : darkMode
-                    ? "text-slate-200 hover:bg-[#172033] hover:text-[#FF6B35]"
-                    : "text-black hover:bg-orange-50 hover:text-[#FF6B35]"
-                }`}
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) =>
+                  `flex h-10 items-center gap-3 rounded-lg px-4 text-[15px] font-black transition ${
+                    isActive
+                      ? "bg-[#ff6b35] text-white"
+                      : "text-black hover:bg-[#fff0ea] hover:text-[#ff6b35]"
+                  }`
+                }
               >
-                <Icon size={17} strokeWidth={2.1} />
+                <Icon size={18} strokeWidth={2.4} />
                 <span>{item.label}</span>
               </NavLink>
             );
@@ -148,33 +167,17 @@ export default function Sidebar({ darkMode = false, onToggleDarkMode }) {
         </div>
       </nav>
 
-      <div
-        className={`border-t px-3 py-6 ${
-          darkMode ? "border-[#263244]" : "border-[#f1f1f1]"
-        }`}
-      >
-        <div
-          className={`mb-4 flex items-center gap-3 rounded-xl px-3 py-3 ${
-            darkMode ? "bg-[#172033]" : "bg-[#FFF7F3]"
-          }`}
-        >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#FF6B35] text-sm font-bold text-white">
+      <div className="px-3 pb-5">
+        <div className="mb-4 flex items-center gap-3 rounded-xl bg-[#fff6f2] p-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#ff6b35] text-[16px] font-black text-white">
             {initials}
           </div>
 
-          <div className="min-w-0">
-            <p
-              className={`truncate text-[14px] font-semibold ${
-                darkMode ? "text-white" : "text-black"
-              }`}
-            >
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[14px] font-black text-black">
               {name}
             </p>
-            <p
-              className={`truncate text-[12px] ${
-                darkMode ? "text-slate-400" : "text-[#7b7b7b]"
-              }`}
-            >
+            <p className="truncate text-[12px] font-medium text-[#777]">
               {email}
             </p>
           </div>
@@ -183,27 +186,20 @@ export default function Sidebar({ darkMode = false, onToggleDarkMode }) {
         <div className="flex items-center justify-around">
           <button
             type="button"
-            onClick={onToggleDarkMode}
-            className={`flex h-9 w-9 items-center justify-center rounded-full transition ${
-              darkMode
-                ? "bg-[#1e293b] text-yellow-300 hover:bg-[#263244]"
-                : "text-black hover:bg-orange-50 hover:text-[#FF6B35]"
-            }`}
-            title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
+            onClick={() => setDarkMode((prev) => !prev)}
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-black transition hover:bg-[#fff0ea] hover:text-[#ff6b35]"
+            title="Toggle theme"
           >
-            {darkMode ? <Sun size={17} /> : <Moon size={17} />}
+            {darkMode ? <Sun size={18} /> : <Moon size={18} />}
           </button>
 
           <button
             type="button"
             onClick={handleLogout}
-            className={`flex h-9 w-9 items-center justify-center rounded-full transition ${
-              darkMode
-                ? "text-slate-200 hover:bg-red-950 hover:text-red-300"
-                : "text-black hover:bg-orange-50 hover:text-[#FF6B35]"
-            }`}
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-black transition hover:bg-[#fff0ea] hover:text-[#ff6b35]"
+            title="Logout"
           >
-            <LogOut size={17} />
+            <LogOut size={18} />
           </button>
         </div>
       </div>

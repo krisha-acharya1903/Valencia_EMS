@@ -1,4 +1,7 @@
+import BlockedAccountWatcher from "./components/BlockedAccountWatcher";
+import JayEmployees from "./pages/JayEmployees";
 import {
+  Bell,
   Building2,
   CalendarCheck,
   ChevronLeft,
@@ -9,7 +12,9 @@ import {
   MessageCircle,
   Search,
   UsersRound,
+  X,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import {
   Navigate,
   NavLink,
@@ -18,12 +23,14 @@ import {
   useLocation,
   useNavigate,
   useParams,
+  useSearchParams,
 } from "react-router-dom";
+
 import { useAuth } from "./context/AuthContext";
 
 import AppLayout from "./layouts/AppLayout";
 
-import Login from "./pages/Login";
+import Login from "./pages/login";
 import Register from "./pages/Register";
 
 import UserDashboard from "./pages/UserDashboard";
@@ -35,6 +42,7 @@ import UserProfile from "./pages/UserProfile";
 
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminChatbox from "./pages/AdminChatbox";
+import AdminNotifications from "./pages/AdminNotifications";
 import UserManagement from "./pages/UserManagement";
 import UserProgressDetail from "./pages/UserProgressDetail";
 import Projects from "./pages/Projects";
@@ -45,6 +53,76 @@ import Departments from "./pages/Departments";
 import SuperAdminChatbox from "./pages/SuperAdminChatbox";
 import SuperAdminDepartmentSelect from "./pages/SuperAdminDepartmentSelect";
 import SuperAdminDepartmentDashboard from "./pages/SuperAdminDepartmentDashboard";
+
+const VALENCIA_LOGO_URL = "/valencia_logo.png";
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+
+function getStoredToken() {
+  return (
+    localStorage.getItem("valencia_auth_token") ||
+    sessionStorage.getItem("valencia_auth_token") ||
+    ""
+  );
+}
+
+async function apiRequest(path, options = {}) {
+  const token = getStoredToken();
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {}),
+    },
+  });
+
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+
+  if (!response.ok) {
+    throw new Error(data?.message || data?.error || "Request failed.");
+  }
+
+  return data;
+}
+
+function formatNotificationTime(value) {
+  if (!value) return "";
+
+  const parsed = new Date(String(value).replace(" ", "T"));
+
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value).slice(0, 16);
+  }
+
+  return parsed.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function ValenciaLogo() {
+  const [logoError, setLogoError] = useState(false);
+
+  return (
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white">
+      {logoError ? (
+        <span className="text-[22px] font-black text-[#FF6B35]">V</span>
+      ) : (
+        <img
+          src={VALENCIA_LOGO_URL}
+          alt="Valencia Nutrition"
+          className="h-full w-full object-contain"
+          onError={() => setLogoError(true)}
+        />
+      )}
+    </div>
+  );
+}
 
 function normalizeRole(role) {
   return String(role || "")
@@ -125,7 +203,12 @@ function EmployeeOnlyRoute({ children }) {
     return <Navigate to="/superadmin" replace />;
   }
 
-  return children;
+  return (
+    <>
+      <BlockedAccountWatcher />
+      {children}
+    </>
+  );
 }
 
 function AdminOnlyRoute({ children }) {
@@ -149,7 +232,12 @@ function AdminOnlyRoute({ children }) {
     return <Navigate to="/dashboard" replace />;
   }
 
-  return children;
+  return (
+    <>
+      <BlockedAccountWatcher />
+      {children}
+    </>
+  );
 }
 
 function SuperAdminOnlyRoute({ children }) {
@@ -169,7 +257,12 @@ function SuperAdminOnlyRoute({ children }) {
     return <Navigate to={getLandingPath(profile)} replace />;
   }
 
-  return children;
+  return (
+    <>
+      <BlockedAccountWatcher />
+      {children}
+    </>
+  );
 }
 
 const adminNavItems = [
@@ -198,6 +291,11 @@ const adminNavItems = [
     label: "Attendance",
     path: "/admin/attendance-management",
     icon: CalendarCheck,
+  },
+  {
+    label: "Notifications",
+    path: "/admin/notifications",
+    icon: Bell,
   },
   {
     label: "Chatbox",
@@ -242,6 +340,13 @@ function getAdminHeaderTitle(pathname) {
     };
   }
 
+  if (pathname.startsWith("/admin/notifications")) {
+    return {
+      title: "Notifications",
+      subtitle: "Send announcements and track user alerts",
+    };
+  }
+
   if (pathname.startsWith("/admin/chatbox")) {
     return {
       title: "Chatbox",
@@ -255,13 +360,254 @@ function getAdminHeaderTitle(pathname) {
   };
 }
 
+function AdminNotificationBell() {
+  const navigate = useNavigate();
+
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+
+  const unreadCount = notifications.filter(
+    (item) => !item.isRead && !item.read_at
+  ).length;
+
+  async function loadNotifications() {
+    try {
+      setLoading(true);
+      const data = await apiRequest("/notifications?limit=20");
+      setNotifications(data?.notifications || []);
+    } catch (error) {
+      console.error("Admin notifications load error:", error);
+      setNotifications([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadNotifications();
+
+    const interval = window.setInterval(loadNotifications, 30000);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  async function markAsRead(id) {
+    try {
+      await apiRequest(`/notifications/${id}/read`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+
+      setNotifications((current) =>
+        current.map((item) =>
+          String(item.id) === String(id)
+            ? {
+                ...item,
+                isRead: true,
+                read_at: item.read_at || new Date().toISOString(),
+              }
+            : item
+        )
+      );
+    } catch (error) {
+      console.error("Mark notification read error:", error);
+    }
+  }
+
+  async function openNotification(item) {
+    await markAsRead(item.id);
+    setOpen(false);
+
+    if (item.entityType === "project" || item.entity_type === "project") {
+      navigate(`/admin/projects/${item.entityId || item.entity_id}`);
+      return;
+    }
+
+    if (item.entityType === "attendance" || item.entity_type === "attendance") {
+      navigate("/admin/attendance-management");
+      return;
+    }
+
+    navigate("/admin/notifications");
+  }
+
+  async function markAllRead() {
+    try {
+      await apiRequest("/notifications/mark-all-read", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+
+      setNotifications((current) =>
+        current.map((item) => ({
+          ...item,
+          isRead: true,
+          read_at: item.read_at || new Date().toISOString(),
+        }))
+      );
+    } catch (error) {
+      console.error("Mark all notifications read error:", error);
+    }
+  }
+
+  return (
+    <div className="relative ml-auto">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-white text-[#061638] transition hover:bg-orange-50 hover:text-[#FF6B35]"
+        title="Notifications"
+      >
+        <Bell size={20} />
+
+        {unreadCount > 0 ? (
+          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-black leading-none text-white">
+            {unreadCount}
+          </span>
+        ) : null}
+      </button>
+
+      {open ? (
+        <div className="absolute right-0 top-12 z-[999] w-[360px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_55px_rgba(15,23,42,0.16)]">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <div>
+              <h3 className="text-sm font-black text-[#061638]">
+                Notifications
+              </h3>
+              <p className="text-xs font-semibold text-slate-500">
+                {unreadCount} unread notification{unreadCount === 1 ? "" : "s"}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="max-h-[310px] overflow-y-auto">
+            {loading ? (
+              <div className="px-4 py-8 text-center text-sm font-semibold text-slate-500">
+                Loading notifications...
+              </div>
+            ) : notifications.length ? (
+              notifications.map((item) => {
+                const isRead = Boolean(item.isRead || item.read_at);
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => openNotification(item)}
+                    className="flex w-full gap-3 border-b border-slate-100 px-4 py-4 text-left transition hover:bg-orange-50/60"
+                  >
+                    <span
+                      className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${
+                        isRead ? "bg-slate-300" : "bg-[#FF6B35]"
+                      }`}
+                    />
+
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-black text-[#061638]">
+                        {item.title}
+                      </span>
+
+                      {item.message ? (
+                        <span className="mt-1 block text-xs font-semibold leading-5 text-slate-500">
+                          {item.message}
+                        </span>
+                      ) : null}
+
+                      <span className="mt-2 block text-[11px] font-black uppercase tracking-[0.12em] text-slate-400">
+                        {formatNotificationTime(
+                          item.createdAt || item.created_at
+                        )}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })
+            ) : (
+              <div className="px-4 py-8 text-center text-sm font-semibold text-slate-500">
+                No notifications yet.
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between bg-slate-50 px-4 py-3">
+            <button
+              type="button"
+              onClick={markAllRead}
+              className="text-xs font-black text-[#FF6B35]"
+            >
+              Mark all as read
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                navigate("/admin/notifications");
+              }}
+              className="rounded-lg bg-[#FF6B35] px-3 py-2 text-xs font-black text-white"
+            >
+              View all
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function AdminShell({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { profile, logout } = useAuth();
+
+  const [searchText, setSearchText] = useState(() => searchParams.get("q") || "");
 
   const name = profile?.name || profile?.fullName || "Admin";
   const email = profile?.email || "admin@valencia.com";
+
+  useEffect(() => {
+    setSearchText(searchParams.get("q") || "");
+  }, [location.pathname, searchParams]);
+
+  function updateSearch(value) {
+    setSearchText(value);
+
+    const nextParams = new URLSearchParams(searchParams);
+    const cleanValue = String(value || "").trim();
+
+    if (cleanValue) {
+      nextParams.set("q", cleanValue);
+    } else {
+      nextParams.delete("q");
+    }
+
+    setSearchParams(nextParams, {
+      replace: true,
+    });
+  }
+
+  function goBack() {
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+
+    navigate("/admin", { replace: false });
+  }
+
+  function goForward() {
+    navigate(1);
+  }
 
   const initials =
     name
@@ -273,7 +619,16 @@ function AdminShell({ children }) {
       ?.toUpperCase() || "A";
 
   const hideSearchBar =
-    location.pathname === "/admin" || location.pathname === "/admin/";
+    location.pathname === "/admin" ||
+    location.pathname === "/admin/" ||
+    location.pathname === "/admin/users" ||
+    location.pathname.startsWith("/admin/users/") ||
+    location.pathname === "/admin/departments" ||
+    location.pathname.startsWith("/admin/departments/") ||
+    location.pathname === "/admin/projects" ||
+    location.pathname.startsWith("/admin/projects/") ||
+    location.pathname === "/admin/notifications" ||
+    location.pathname.startsWith("/admin/notifications/");
 
   const headerInfo = getAdminHeaderTitle(location.pathname);
 
@@ -303,9 +658,7 @@ function AdminShell({ children }) {
       <aside className="fixed left-0 top-0 z-40 flex h-screen w-[280px] flex-col border-r border-[#eef1f6] bg-white">
         <div className="flex h-[76px] items-center justify-between border-b border-[#eef1f6] px-5">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#fff0ea] text-[22px] font-black text-[#FF6B35]">
-              V
-            </div>
+            <ValenciaLogo />
 
             <div>
               <h1 className="text-[16px] font-black leading-tight text-[#FF6B35]">
@@ -316,13 +669,6 @@ function AdminShell({ children }) {
               </p>
             </div>
           </div>
-
-          <button
-            type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-orange-50 hover:text-[#FF6B35]"
-          >
-            <ChevronLeft size={16} />
-          </button>
         </div>
 
         <nav className="flex-1 space-y-2 px-4 py-7">
@@ -380,7 +726,7 @@ function AdminShell({ children }) {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => navigate(-1)}
+                onClick={goBack}
                 className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF6B35] text-white shadow-sm transition hover:opacity-90"
               >
                 <ChevronLeft size={20} />
@@ -388,7 +734,7 @@ function AdminShell({ children }) {
 
               <button
                 type="button"
-                onClick={() => navigate(1)}
+                onClick={goForward}
                 className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#FF6B35] text-white shadow-sm transition hover:opacity-90"
               >
                 <ChevronRight size={20} />
@@ -411,11 +757,15 @@ function AdminShell({ children }) {
                 <Search size={19} className="text-slate-400" />
                 <input
                   type="text"
+                  value={searchText}
+                  onChange={(event) => updateSearch(event.target.value)}
                   placeholder="Search employees, projects, tasks..."
                   className="h-full w-full bg-transparent text-sm font-semibold text-[#061638] outline-none placeholder:text-slate-400"
                 />
               </div>
             )}
+
+            <AdminNotificationBell />
           </div>
         </header>
 
@@ -485,6 +835,7 @@ export default function App() {
         <Route path="projects/:projectId" element={<UserProjectDetails />} />
         <Route path="attendance" element={<UserAttendanceDetail />} />
         <Route path="chatbox" element={<UserChatbox />} />
+        <Route path="employees" element={<JayEmployees />} />
         <Route path="profile" element={<UserProfile />} />
       </Route>
 
@@ -561,6 +912,15 @@ export default function App() {
       />
 
       <Route
+        path="/admin/notifications"
+        element={
+          <AdminPage>
+            <AdminNotifications />
+          </AdminPage>
+        }
+      />
+
+      <Route
         path="/admin/chatbox"
         element={
           <AdminPage>
@@ -569,18 +929,9 @@ export default function App() {
         }
       />
 
-      <Route
-        path="/admin/work-progress"
-        element={<Navigate to="/admin" replace />}
-      />
-      <Route
-        path="/admin/attendance-leave"
-        element={<Navigate to="/admin" replace />}
-      />
-      <Route
-        path="/admin/employee-analytics"
-        element={<Navigate to="/admin" replace />}
-      />
+      <Route path="/admin/work-progress" element={<Navigate to="/admin" replace />} />
+      <Route path="/admin/attendance-leave" element={<Navigate to="/admin" replace />} />
+      <Route path="/admin/employee-analytics" element={<Navigate to="/admin" replace />} />
 
       <Route path="/users" element={<Navigate to="/admin/users" replace />} />
       <Route
@@ -591,24 +942,12 @@ export default function App() {
         path="/users/:userId/attendance"
         element={<LegacyUserAttendanceRedirect />}
       />
-      <Route
-        path="/departments"
-        element={<Navigate to="/admin/departments" replace />}
-      />
-      <Route
-        path="/projects"
-        element={<Navigate to="/admin/projects" replace />}
-      />
+      <Route path="/departments" element={<Navigate to="/admin/departments" replace />} />
+      <Route path="/projects" element={<Navigate to="/admin/projects" replace />} />
       <Route path="/projects/:projectId" element={<LegacyProjectRedirect />} />
       <Route path="/work-progress" element={<Navigate to="/admin" replace />} />
-      <Route
-        path="/attendance-leave"
-        element={<Navigate to="/admin" replace />}
-      />
-      <Route
-        path="/employee-analytics"
-        element={<Navigate to="/admin" replace />}
-      />
+      <Route path="/attendance-leave" element={<Navigate to="/admin" replace />} />
+      <Route path="/employee-analytics" element={<Navigate to="/admin" replace />} />
 
       <Route
         path="/superadmin"

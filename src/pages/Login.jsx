@@ -15,7 +15,7 @@ export default function Login() {
   const [form, setForm] = useState({
     identifier: "",
     password: "",
-    remember: true,
+    remember: false,
   });
 
   const [loading, setLoading] = useState(false);
@@ -35,6 +35,13 @@ export default function Login() {
     setForm((current) => ({
       ...current,
       [name]: type === "checkbox" ? checked : value,
+    }));
+  };
+
+  const toggleRemember = () => {
+    setForm((current) => ({
+      ...current,
+      remember: !current.remember,
     }));
   };
 
@@ -117,11 +124,13 @@ export default function Login() {
           isDark ? "border-white/5" : "border-orange-900/5"
         }`}
       />
+
       <div
         className={`absolute left-1/2 top-[10%] h-[230px] w-[230px] translate-x-[4%] rounded-full border ${
           isDark ? "border-white/5" : "border-orange-900/5"
         }`}
       />
+
       <div
         className={`absolute left-1/2 top-[14%] h-[135px] w-[135px] translate-x-[25%] rounded-full border ${
           isDark ? "border-white/5" : "border-orange-900/5"
@@ -259,25 +268,32 @@ export default function Login() {
               </div>
             </div>
 
-            <label
-              className={`flex cursor-pointer select-none items-center gap-3 text-sm font-bold ${
+            <button
+              type="button"
+              onClick={toggleRemember}
+              className={`flex w-fit cursor-pointer select-none items-center gap-3 border-0 bg-transparent p-0 text-sm font-bold outline-none ${
                 isDark ? "text-white/70" : "text-[#4d2a1a]/75"
               }`}
+              aria-pressed={form.remember}
             >
-              <input
-                type="checkbox"
-                name="remember"
-                checked={form.remember}
-                onChange={update}
-                className="peer sr-only"
-              />
-
-              <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full border border-[#FF6D35]/50 bg-[#FF6D35]/10 shadow-[0_0_18px_rgba(255,109,53,0.18)] transition peer-checked:border-[#FF6D35] peer-checked:bg-[#FF6D35]">
-                <span className="h-[7px] w-[7px] rounded-full bg-white opacity-0 transition peer-checked:opacity-100" />
+              <span
+                className={`flex h-[19px] w-[19px] items-center justify-center rounded-md border-2 transition ${
+                  form.remember
+                    ? "border-[#FF6D35] bg-white"
+                    : isDark
+                      ? "border-[#FF6D35]/70 bg-white/10"
+                      : "border-[#FF6D35]/70 bg-white/60"
+                }`}
+              >
+                {form.remember ? (
+                  <span className="text-[15px] font-black leading-none text-[#FF6D35]">
+                    ✓
+                  </span>
+                ) : null}
               </span>
 
               Keep me signed in
-            </label>
+            </button>
 
             <button
               type="submit"

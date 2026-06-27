@@ -1,226 +1,337 @@
-import { getToken } from "./api";
+import { apiDelete, apiGet, apiPatch, apiPost } from "./api";
 
-const API_BASE = "http://localhost:5000/api";
-
-function getAuthToken() {
-  const tokenFromApi = getToken?.();
-
-  if (tokenFromApi && tokenFromApi !== "undefined" && tokenFromApi !== "null") {
-    return tokenFromApi;
-  }
-
-  const directKeys = [
-    "token",
-    "authToken",
-    "valenciaToken",
-    "valencia-token",
-    "valencia_auth_token",
-    "emsToken",
-    "jwt",
-    "accessToken",
-  ];
-
-  const storages = [localStorage, sessionStorage];
-
-  for (const storage of storages) {
-    for (const key of directKeys) {
-      const value = storage.getItem(key);
-
-      if (value && value !== "undefined" && value !== "null") {
-        return value;
-      }
-    }
-
-    for (const key of Object.keys(storage)) {
-      const value = storage.getItem(key);
-
-      if (!value) continue;
-
-      try {
-        const parsed = JSON.parse(value);
-
-        if (parsed?.token) return parsed.token;
-        if (parsed?.authToken) return parsed.authToken;
-        if (parsed?.accessToken) return parsed.accessToken;
-        if (parsed?.jwt) return parsed.jwt;
-
-        if (parsed?.session?.token) return parsed.session.token;
-        if (parsed?.auth?.token) return parsed.auth.token;
-        if (parsed?.data?.token) return parsed.data.token;
-      } catch {
-        // Ignore non-JSON storage values
-      }
-    }
-  }
-
-  return "";
-}
-
-async function apiRequest(path, options = {}) {
-  const token = getAuthToken();
-
-  if (!token) {
-    throw new Error("Missing authorization token. Please logout and login again.");
-  }
-
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(options.headers || {}),
-    },
-  });
-
-  const raw = await response.text();
-
-  let data = null;
-
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = raw;
-  }
-
-  if (!response.ok) {
-    const message =
-      data?.message ||
-      data?.error ||
-      `Request failed: ${options.method || "GET"} ${path}`;
-
-    throw new Error(message);
-  }
-
-  return data;
-}
-
-function extractList(data) {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.projects)) return data.projects;
-  if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.items)) return data.items;
-
+function extractProjects(response) {
+  if (Array.isArray(response)) return response;
+  if (Array.isArray(response?.projects)) return response.projects;
+  if (Array.isArray(response?.data)) return response.data;
+  if (Array.isArray(response?.items)) return response.items;
+  if (Array.isArray(response?.assignedProjects)) return response.assignedProjects;
+  if (Array.isArray(response?.assigned_projects)) return response.assigned_projects;
+  if (Array.isArray(response?.assignedTasks)) return response.assignedTasks;
+  if (Array.isArray(response?.assigned_tasks)) return response.assigned_tasks;
+  if (Array.isArray(response?.tasks)) return response.tasks;
   return [];
 }
 
-function extractOne(data) {
-  if (data?.project) return data.project;
-  if (data?.data) return data.data;
-
-  return data;
+function extractProject(response) {
+  if (response?.project) return response.project;
+  if (response?.data) return response.data;
+  return response;
 }
 
-function parseMembers(value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item));
-  }
+function safeArray(value) {
+  if (!value) return [];
+
+  if (Array.isArray(value)) return value;
 
   if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
+    const trimmed = value.trim();
+    if (!trimmed) return [];
 
-      if (Array.isArray(parsed)) {
-        return parsed.map((item) => String(item));
-      }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === "object") return [parsed];
+      return [];
     } catch {
-      return value
+      return trimmed
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
     }
   }
 
-  return [];
+  if (typeof value === "object") return [value];
+
+  return [value];
 }
 
-function normalizeProject(project = {}) {
+function normalizeMembers(project = {}) {
+  return safeArray(
+    project.members ||
+      project.member ||
+      project.assignedTo ||
+      project.assigned_to ||
+      project.assignee ||
+      project.assignees ||
+      project.assignedMembers ||
+      project.assigned_members ||
+      project.assignedUsers ||
+      project.assigned_users ||
+      project.assignedEmployees ||
+      project.assigned_employees ||
+      project.selectedUsers ||
+      project.selected_users ||
+      project.selectedEmployees ||
+      project.selected_employees ||
+      project.memberIds ||
+      project.member_ids ||
+      project.assignedToIds ||
+      project.assigned_to_ids ||
+      project.assignedUserIds ||
+      project.assigned_user_ids ||
+      project.assignedEmployeeIds ||
+      project.assigned_employee_ids ||
+      project.employeeIds ||
+      project.employee_ids ||
+      project.users ||
+      project.employees ||
+      []
+  );
+}
+
+function getMemberId(member) {
+  if (!member) return "";
+
+  if (typeof member === "object") {
+    return String(
+      member.id ||
+        member._id ||
+        member.uid ||
+        member.userId ||
+        member.user_id ||
+        member.employeeId ||
+        member.employee_id ||
+        member.email ||
+        ""
+    ).trim();
+  }
+
+  return String(member).trim();
+}
+
+function normalizeProjectPayload(project = {}) {
+  const members = normalizeMembers(project);
+  const employeeIds = members.map(getMemberId).filter(Boolean);
+
   return {
     ...project,
-    id: String(project.id || project.projectId || project.project_id || ""),
-    name: project.name || project.title || "Untitled Project",
-    description: project.description || "",
-    department: project.department || "",
+
+    name: project.name || project.title || project.projectName || "",
+    title: project.title || project.name || project.projectName || "",
+    projectName: project.projectName || project.name || project.title || "",
+    project_name: project.project_name || project.projectName || project.name || project.title || "",
+
+    description: project.description || project.details || "",
+    details: project.details || project.description || "",
+
+    department:
+      project.department || project.division || project.departmentName || "",
+    departmentName:
+      project.departmentName || project.department || project.division || "",
+    department_name:
+      project.department_name ||
+      project.departmentName ||
+      project.department ||
+      project.division ||
+      "",
+    division:
+      project.division || project.department || project.departmentName || "",
+
     status: project.status || "active",
-    progress: Number(project.progress || 0),
     priority: project.priority || "medium",
-    managerId: String(project.managerId || project.manager_id || ""),
-    members: parseMembers(project.members),
+
     startDate: project.startDate || project.start_date || "",
-    deadline: project.deadline || project.endDate || project.end_date || "",
+    start_date: project.start_date || project.startDate || "",
+
     endDate: project.endDate || project.end_date || project.deadline || "",
-    createdBy: String(project.createdBy || project.created_by || ""),
-    createdAt: project.createdAt || project.created_at || "",
-    updatedAt: project.updatedAt || project.updated_at || "",
+    end_date: project.end_date || project.endDate || project.deadline || "",
+    deadline: project.deadline || project.endDate || project.end_date || "",
+    dueDate: project.dueDate || project.due_date || project.deadline || project.endDate || "",
+    due_date: project.due_date || project.dueDate || project.deadline || project.end_date || "",
+
+    progress: Number(project.progress || project.progressPercent || project.progress_percent || 0),
+
+    managerId: project.managerId || project.manager_id || null,
+    manager_id: project.manager_id || project.managerId || null,
+
+    members,
+    member: members,
+
+    assignedTo: members,
+    assigned_to: members,
+
+    assignedMembers: members,
+    assigned_members: members,
+
+    assignedUsers: members,
+    assigned_users: members,
+
+    assignedEmployees: members,
+    assigned_employees: members,
+
+    selectedUsers: members,
+    selected_users: members,
+
+    selectedEmployees: members,
+    selected_employees: members,
+
+    users: members,
+    employees: members,
+
+    employeeIds,
+    employee_ids: employeeIds,
+
+    assignedToIds: employeeIds,
+    assigned_to_ids: employeeIds,
+
+    assignedUserIds: employeeIds,
+    assigned_user_ids: employeeIds,
+
+    assignedEmployeeIds: employeeIds,
+    assigned_employee_ids: employeeIds,
+
+    memberIds: employeeIds,
+    member_ids: employeeIds,
   };
 }
 
-function toApiPayload(payload = {}) {
-  return {
-    name: payload.name || payload.title || "",
-    description: payload.description || "",
-    department: payload.department || "",
-    status: payload.status || "active",
-    progress: Number(payload.progress || 0),
-    priority: payload.priority || "medium",
-    manager_id: payload.managerId || payload.manager_id || "",
-    members: Array.isArray(payload.members)
-      ? payload.members.map((item) => String(item))
-      : [],
-    start_date: payload.startDate || payload.start_date || "",
-    end_date: payload.deadline || payload.endDate || payload.end_date || "",
-  };
+async function tryProjectEndpoints(paths) {
+  let lastError = null;
+
+  for (const path of paths) {
+    try {
+      const response = await apiGet(path);
+      return extractProjects(response);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("No compatible employee projects endpoint found.");
 }
 
-export async function getProjects(profile) {
-  const data = await apiRequest("/projects", {
-    method: "GET",
-  });
+/* ---------------- EMPLOYEE-SCOPED PROJECT APIs ---------------- */
 
-  return extractList(data).map(normalizeProject);
+export async function getMyProjects() {
+  return tryProjectEndpoints([
+    "/employees/me/projects",
+    "/employee/me/projects",
+    "/projects/me",
+    "/me/projects",
+    "/tasks/my-tasks",
+    "/tasks/me",
+  ]);
+}
+
+export async function getEmployeeProjects() {
+  return getMyProjects();
+}
+
+export async function getAssignedProjects() {
+  return getMyProjects();
+}
+
+export async function getMyTasks() {
+  return tryProjectEndpoints([
+    "/tasks/my-tasks",
+    "/tasks/me",
+    "/employees/me/tasks",
+    "/employee/me/tasks",
+    "/me/tasks",
+  ]);
+}
+
+/* ---------------- GENERAL PROJECT APIs ---------------- */
+
+export async function getProjects() {
+  const response = await apiGet("/projects");
+  return extractProjects(response);
 }
 
 export async function getAllProjects() {
-  const data = await apiRequest("/projects", {
-    method: "GET",
-  });
-
-  return extractList(data).map(normalizeProject);
+  const response = await apiGet("/projects");
+  return extractProjects(response);
 }
 
-export async function createProject(payload, actor) {
-  const data = await apiRequest("/projects", {
-    method: "POST",
-    body: JSON.stringify(toApiPayload(payload)),
-  });
-
-  return normalizeProject(extractOne(data));
+export async function fetchProjects() {
+  const response = await apiGet("/projects");
+  return extractProjects(response);
 }
 
-export async function updateProject(id, updates, actor) {
-  if (!id) {
-    throw new Error("Project ID is missing.");
+export async function getProjectById(projectId) {
+  const response = await apiGet(`/projects/${projectId}`);
+  return extractProject(response);
+}
+
+export async function getProject(projectId) {
+  const response = await apiGet(`/projects/${projectId}`);
+  return extractProject(response);
+}
+
+export async function createProject(project) {
+  const response = await apiPost("/projects", normalizeProjectPayload(project));
+  return extractProject(response);
+}
+
+export async function addProject(project) {
+  const response = await apiPost("/projects", normalizeProjectPayload(project));
+  return extractProject(response);
+}
+
+export async function saveProject(projectOrId, maybeProject) {
+  if (maybeProject) {
+    const response = await apiPatch(
+      `/projects/${projectOrId}`,
+      normalizeProjectPayload(maybeProject)
+    );
+    return extractProject(response);
   }
 
-  const data = await apiRequest(`/projects/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(toApiPayload(updates)),
-  });
-
-  return normalizeProject(extractOne(data));
+  const response = await apiPost(
+    "/projects",
+    normalizeProjectPayload(projectOrId)
+  );
+  return extractProject(response);
 }
 
-export async function deleteProject(id, actor) {
-  if (!id) {
-    throw new Error("Project ID is missing.");
-  }
-
-  await apiRequest(`/projects/${id}`, {
-    method: "DELETE",
-  });
-
-  return true;
+export async function updateProject(projectId, project) {
+  const response = await apiPatch(
+    `/projects/${projectId}`,
+    normalizeProjectPayload(project)
+  );
+  return extractProject(response);
 }
 
-export async function refreshProjectProgress(projectId) {
-  return null;
+export async function editProject(projectId, project) {
+  const response = await apiPatch(
+    `/projects/${projectId}`,
+    normalizeProjectPayload(project)
+  );
+  return extractProject(response);
+}
+
+export async function deleteProject(projectId) {
+  return apiDelete(`/projects/${projectId}`);
+}
+
+export async function removeProject(projectId) {
+  return apiDelete(`/projects/${projectId}`);
+}
+
+export async function pauseProject(projectId, project = {}) {
+  const response = await apiPatch(`/projects/${projectId}`, {
+    ...normalizeProjectPayload(project),
+    status: "on_hold",
+  });
+
+  return extractProject(response);
+}
+
+export async function restoreProject(projectId, project = {}) {
+  const response = await apiPatch(`/projects/${projectId}`, {
+    ...normalizeProjectPayload(project),
+    status: "active",
+  });
+
+  return extractProject(response);
+}
+
+export async function softDeleteProject(projectId, project = {}) {
+  const response = await apiPatch(`/projects/${projectId}`, {
+    ...normalizeProjectPayload(project),
+    status: "deleted",
+  });
+
+  return extractProject(response);
 }

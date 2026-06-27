@@ -34,6 +34,7 @@ export function AuthProvider({ children }) {
   const value = useMemo(
     () => ({
       profile,
+      user: profile,
       loading,
       isAuthenticated: Boolean(profile),
 
@@ -44,9 +45,14 @@ export function AuthProvider({ children }) {
       },
 
       async register(payload) {
-        const nextProfile = await registerUser(payload);
-        setProfile(nextProfile);
-        return nextProfile;
+        const createdUser = await registerUser(payload);
+
+        /*
+          Important:
+          Do not replace the current logged-in admin/superadmin profile
+          when they create a new employee/admin account.
+        */
+        return createdUser;
       },
 
       async logout() {
@@ -71,3 +77,5 @@ export function useAuth() {
 
   return context;
 }
+
+export default AuthContext;

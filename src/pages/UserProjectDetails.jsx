@@ -1,759 +1,598 @@
 import {
-  Check,
-  FileText,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronUp,
+  ClipboardList,
+  Download,
+  Link as LinkIcon,
+  Loader2,
+  Paperclip,
   Plus,
-  Send,
   Trash2,
   UploadCloud,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import { getProjects } from "../services/projectService";
-import { getTasks } from "../services/taskService";
+import toast from "react-hot-toast";
+import { useNavigate, useParams } from "react-router-dom";
+import {
+  createEmployeeSubtask,
+  deleteEmployeeSubtask,
+  downloadEmployeeSubtaskAttachment,
+  getEmployeeProjectBoard,
+  submitEmployeeSubtask,
+  updateEmployeeSubtaskStatus,
+} from "../services/employeeProjectBoardService";
 
-const ORANGE = "#FF6B35";
-
-const fallbackProject = {
-  id: "aroma-de-valencia",
-  name: "Aroma De Valencia",
-  priority: "High",
-  created: "Mar 23, 10:34 PM",
-  deadline: "Jun 02, 04:01 PM",
-  description:
-    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Curabitur in fermentum felis, eu luctus lectus. Pellentesque lacus neque, iaculis in posuere vel, ullamcorper vitae diam. Curabitur ut est lectus. Quisque ac maximus augue. In hac habitasse platea dictumst. Integer ac urna et diam sagittis maximus. Sed molestie tempus ante, quis vestibulum mauris tempor sed.",
-};
-
-const fallbackTasks = [
-  {
-    id: 1,
-    status: "todo",
-    category: ["STRATEGY"],
-    title: "Define product positioning and messaging",
-    progress: 0,
-    members: ["TT", "TH"],
-    extra: 1,
-    subtasks: [
-      { title: "Competitor analysis", done: false },
-      { title: "Draft positioning statement", done: false },
-    ],
-  },
-  {
-    id: 2,
-    status: "todo",
-    category: ["DESIGN"],
-    title: "Design retail shelf display units",
-    progress: 0,
-    members: ["P"],
-    extra: 1,
-    subtasks: [
-      { title: "Brief design agency", done: false },
-      { title: "Review concepts", done: false },
-      { title: "Finalise artwork", done: false },
-    ],
-  },
-  {
-    id: 3,
-    status: "progress",
-    category: ["ARTWORK", "PRINT"],
-    title: "Packaging artwork approval",
-    progress: 65,
-    members: ["SM", "J"],
-    extra: 1,
-    subtasks: [
-      { title: "Submit artwork to brand team", done: true },
-      { title: "Review print proofs", done: true },
-      { title: "Final sign-off from MD", done: false },
-    ],
-  },
-  {
-    id: 4,
-    status: "progress",
-    category: ["REGULATORY"],
-    title: "Regulatory compliance submission",
-    progress: 40,
-    members: ["PN", "TH"],
-    extra: 1,
-    subtasks: [
-      { title: "EU dossier prepared", done: true },
-      { title: "MENA dossier prepared", done: false },
-      { title: "Submit to authority", done: false },
-    ],
-  },
-  {
-    id: 5,
-    status: "done",
-    category: ["R&D", "QA"],
-    title: "Stability & shelf-life testing",
-    progress: 100,
-    members: ["J"],
-    extra: 1,
-    subtasks: [
-      { title: "Set up test batches", done: true },
-      { title: "12-month accelerated test", done: true },
-      { title: "Document results", done: true },
-    ],
-  },
-  {
-    id: 6,
-    status: "done",
-    category: ["R&D"],
-    title: "Formula sign-off with R&D lead",
-    progress: 100,
-    members: ["J", "SM"],
-    extra: 1,
-    subtasks: [
-      { title: "Final formula review", done: true },
-      { title: "MD sign-off obtained", done: true },
-    ],
-  },
-];
-
-const reviewFiles = [
-  {
-    id: 1,
-    name: "Packaging_Artwork_v4.pdf",
-    meta: "2.4 MB · Sent 2h ago",
-    status: "Under Review",
-    statusClass: "bg-orange-50 text-orange-500",
-    iconClass: "bg-red-100 text-red-500",
-    note: "",
-    reviewers: ["SM", "TL", "AD"],
-  },
-  {
-    id: 2,
-    name: "Stability_Test.xlsx",
-    meta: "1.1 MB · Sent 1d ago",
-    status: "Approved",
-    statusClass: "bg-green-50 text-green-600",
-    iconClass: "bg-green-100 text-green-600",
-    note: "",
-    reviewers: ["SM", "TL"],
-  },
-  {
-    id: 3,
-    name: "Packaging_Artwork_v4.pdf",
-    meta: "2.6 MB · Sent 3d ago",
-    status: "Changes Requested",
-    statusClass: "bg-red-50 text-red-500",
-    iconClass: "bg-red-100 text-red-500",
-    note: "Logo size needs to be increased",
-    reviewers: ["SM"],
-  },
-];
-
-const blankTaskForm = {
-  status: "todo",
-  title: "",
-  categories: "NEW",
-  members: "ME",
-  progress: 0,
-  subtasks: ["New checklist item"],
-};
-
-function normalizeId(value) {
-  if (value === undefined || value === null) return "";
-  return String(value);
+function clean(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
-function normalizeStatus(status) {
-  const clean = String(status || "").toLowerCase().replaceAll("_", " ");
+function isSubtaskDone(subtask) {
+  const status = clean(subtask?.status);
+
+  return (
+    subtask?.completed === true ||
+    status === "completed" ||
+    status === "complete" ||
+    status === "done" ||
+    status === "finished"
+  );
+}
+
+function getTaskStage(task) {
+  const status = clean(task?.status);
+  const subtasks = Array.isArray(task?.subtasks) ? task.subtasks : [];
+  const completedCount = subtasks.filter(isSubtaskDone).length;
+
+  const hasAdminReview =
+    Boolean(task?.reviewedAt) ||
+    Boolean(task?.reviewed_at) ||
+    Boolean(task?.reviewedBy) ||
+    Boolean(task?.reviewed_by);
+
+  /*
+    Done should happen ONLY after admin approval.
+    If all subtasks are completed but admin has not approved,
+    show task in Under Review.
+  */
+  if (subtasks.length > 0 && completedCount === subtasks.length && !hasAdminReview) {
+    return "review";
+  }
 
   if (
-    clean.includes("done") ||
-    clean.includes("complete") ||
-    clean.includes("finished") ||
-    clean.includes("closed")
+    status === "under review" ||
+    status === "underreview" ||
+    status === "review" ||
+    status === "pending review"
+  ) {
+    return "review";
+  }
+
+  if (
+    hasAdminReview &&
+    (status === "completed" ||
+      status === "complete" ||
+      status === "done" ||
+      status === "finished")
   ) {
     return "done";
   }
 
-  if (
-    clean.includes("progress") ||
-    clean.includes("working") ||
-    clean.includes("ongoing") ||
-    clean.includes("active")
-  ) {
-    return "progress";
+  if (subtasks.length === 0) return "todo";
+
+  if (completedCount === 0) return "todo";
+
+  return "progress";
+}
+
+function formatDate(value) {
+  if (!value) return "-";
+
+  const date = new Date(String(value).replace(" ", "T"));
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value).slice(0, 16);
   }
 
-  return "todo";
-}
-
-function getProjectId(project, index = 0) {
-  return normalizeId(
-    project?.id ||
-      project?._id ||
-      project?.projectId ||
-      project?.project_id ||
-      project?.slug ||
-      `project-${index + 1}`
-  );
-}
-
-function getProjectName(project) {
-  return (
-    project?.name ||
-    project?.title ||
-    project?.projectName ||
-    project?.project_name ||
-    "Aroma De Valencia"
-  );
-}
-
-function getProjectDescription(project) {
-  return project?.description || project?.details || fallbackProject.description;
-}
-
-function formatDateTime(value, fallback) {
-  if (!value) return fallback;
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return value;
-
   return date.toLocaleDateString("en-IN", {
-    month: "short",
     day: "2-digit",
+    month: "short",
+    year: "numeric",
   });
 }
 
-function getTaskProjectId(task) {
-  return normalizeId(
-    task?.projectId ||
-      task?.project_id ||
-      task?.project ||
-      task?.parentProjectId ||
-      task?.parent_project_id
+function formatDateTime(value) {
+  if (!value) return "-";
+
+  const date = new Date(String(value).replace(" ", "T"));
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value).slice(0, 16);
+  }
+
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getTaskDeadline(task) {
+  return (
+    task?.dueDate ||
+    task?.due_date ||
+    task?.deadline ||
+    task?.endDate ||
+    task?.end_date ||
+    task?.toDate ||
+    task?.to_date ||
+    ""
   );
 }
 
-function getTaskTitle(task) {
-  return task?.title || task?.name || task?.task || task?.taskName || "Untitled Task";
+function getProgress(task) {
+  const subtasks = Array.isArray(task?.subtasks) ? task.subtasks : [];
+
+  if (subtasks.length === 0) return 0;
+
+  const completedCount = subtasks.filter(isSubtaskDone).length;
+
+  return Math.round((completedCount / subtasks.length) * 100);
 }
 
-function getTaskProgress(task) {
-  const direct =
-    Number(task?.progress) ||
-    Number(task?.completion) ||
-    Number(task?.percentage);
+function getCompletedCount(task) {
+  const subtasks = Array.isArray(task?.subtasks) ? task.subtasks : [];
+  return subtasks.filter(isSubtaskDone).length;
+}
 
-  if (Number.isFinite(direct) && direct > 0) {
-    return Math.max(0, Math.min(100, Math.round(direct)));
+function stageLabel(stage) {
+  if (stage === "progress") return "In Progress";
+  if (stage === "review") return "Under Review";
+  if (stage === "done") return "Done";
+  return "To Do";
+}
+
+function stageTone(stage) {
+  if (stage === "review") {
+    return {
+      dot: "bg-amber-500",
+      badge: "bg-amber-50 text-amber-700",
+      border: "border-amber-100",
+      header: "text-amber-700",
+      progress: "bg-amber-500",
+    };
   }
 
-  const subtasks = Array.isArray(task?.subtasks)
-    ? task.subtasks
-    : Array.isArray(task?.sub_tasks)
-    ? task.sub_tasks
-    : [];
-
-  if (subtasks.length) {
-    const done = subtasks.filter((item) => {
-      const status = String(item?.status || "").toLowerCase();
-      return item?.done === true || status === "done" || status === "completed";
-    }).length;
-
-    return Math.round((done / subtasks.length) * 100);
+  if (stage === "done") {
+    return {
+      dot: "bg-emerald-500",
+      badge: "bg-emerald-50 text-emerald-700",
+      border: "border-emerald-100",
+      header: "text-emerald-700",
+      progress: "bg-emerald-500",
+    };
   }
 
-  return normalizeStatus(task?.status) === "done" ? 100 : 0;
-}
-
-function getTaskSubtasks(task) {
-  const subtasks = task?.subtasks || task?.sub_tasks || task?.children || [];
-
-  if (Array.isArray(subtasks) && subtasks.length > 0) {
-    return subtasks.map((item, index) => ({
-      title: item?.title || item?.name || `Subtask ${index + 1}`,
-      done:
-        item?.done === true ||
-        ["done", "complete", "completed"].includes(
-          String(item?.status || "").toLowerCase()
-        ),
-    }));
+  if (stage === "progress") {
+    return {
+      dot: "bg-blue-500",
+      badge: "bg-blue-50 text-blue-700",
+      border: "border-blue-100",
+      header: "text-blue-700",
+      progress: "bg-blue-500",
+    };
   }
-
-  return [];
-}
-
-function getInitials(name) {
-  const cleanName = String(name || "").trim();
-
-  if (!cleanName) return "U";
-
-  return cleanName
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
-
-function calculateTaskProgress(subtasks, fallback = 0) {
-  if (!Array.isArray(subtasks) || subtasks.length === 0) {
-    return fallback;
-  }
-
-  const doneCount = subtasks.filter((subtask) => subtask.done).length;
-  return Math.round((doneCount / subtasks.length) * 100);
-}
-
-function calculateTaskStatus(currentStatus, subtasks) {
-  if (!Array.isArray(subtasks) || subtasks.length === 0) {
-    return currentStatus;
-  }
-
-  const doneCount = subtasks.filter((subtask) => subtask.done).length;
-
-  if (doneCount === subtasks.length) return "done";
-  if (doneCount > 0) return "progress";
-  return currentStatus === "done" ? "progress" : currentStatus;
-}
-
-function normalizeTask(task, index) {
-  const status = normalizeStatus(task?.status);
-  const subtasks = getTaskSubtasks(task);
 
   return {
-    id: task?.id || task?._id || `task-${index + 1}`,
-    status,
-    category: [String(task?.priority || task?.category || "TASK").toUpperCase()],
-    title: getTaskTitle(task),
-    progress: getTaskProgress(task),
-    members: [getInitials(task?.assigneeName || task?.assignedTo || "SM")],
-    extra: 1,
-    subtasks:
-      subtasks.length > 0
-        ? subtasks
-        : [
-            {
-              title: "Task checklist item",
-              done: status === "done",
-            },
-          ],
+    dot: "bg-slate-400",
+    badge: "bg-slate-100 text-slate-700",
+    border: "border-slate-100",
+    header: "text-slate-700",
+    progress: "bg-[#FF6B35]",
   };
 }
 
-function AvatarBubble({ label, index }) {
-  const colors = [
-    "bg-[#ef4f73]",
-    "bg-[#f45f6c]",
-    "bg-[#6d6ce8]",
-    "bg-[#24bfa2]",
-    "bg-[#d6d9e3]",
-    "bg-[#f5a623]",
-  ];
+function EmptyColumn({ stage }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-[#e5e7eb] bg-white/60 px-4 py-10 text-center">
+      <ClipboardList size={28} className="mx-auto mb-3 text-[#FF6B35]" />
+      <p className="text-[13px] font-black text-black">
+        No {stageLabel(stage).toLowerCase()} tasks
+      </p>
+      <p className="mt-1 text-[12px] font-semibold text-[#888]">
+        Tasks move here automatically.
+      </p>
+    </div>
+  );
+}
+
+function TaskCard({
+  task,
+  expanded,
+  onToggleExpand,
+  newSubtaskText,
+  setNewSubtaskText,
+  onAddSubtask,
+  onOpenSubtask,
+  onToggleSubtaskStatus,
+  onDeleteSubtask,
+  actionLoading,
+}) {
+  const stage = getTaskStage(task);
+  const tone = stageTone(stage);
+  const subtasks = Array.isArray(task?.subtasks) ? task.subtasks : [];
+  const progress = getProgress(task);
+  const completedCount = getCompletedCount(task);
 
   return (
     <div
-      className={`flex h-6 w-6 items-center justify-center rounded-full border-2 border-white text-[8px] font-bold text-white ${
-        colors[index % colors.length]
-      }`}
+      className={`rounded-3xl border ${tone.border} bg-white p-5 shadow-[0_14px_36px_rgba(15,23,42,0.08)] transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_18px_44px_rgba(15,23,42,0.12)]`}
     >
-      {label}
-    </div>
-  );
-}
-
-function StatusHeading({ title, count, colorClass }) {
-  return (
-    <div className="mb-3 flex items-center justify-between">
-      <div className="flex items-center gap-2">
-        <span className={`h-2.5 w-2.5 rounded-full ${colorClass}`} />
-        <h3 className="text-[15px] font-bold text-black">{title}</h3>
-      </div>
-
-      <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#eef4fb] px-2 text-[12px] font-bold text-[#73a4dc]">
-        {count}
-      </span>
-    </div>
-  );
-}
-
-function TaskCard({ task, onToggleSubtask, onDeleteTask }) {
-  const doneCount = task.subtasks.filter((item) => item.done).length;
-  const totalCount = task.subtasks.length;
-
-  return (
-    <div className="group relative rounded-2xl border border-[#e8e8e8] bg-white px-4 py-4 shadow-[0_6px_16px_rgba(0,0,0,0.05)]">
-      <button
-        type="button"
-        onClick={() => onDeleteTask(task.id)}
-        className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-red-50 text-red-500 opacity-0 transition hover:bg-red-100 group-hover:opacity-100"
-        title="Delete task"
-      >
-        <Trash2 size={15} />
-      </button>
-
-      <div className="mb-3 flex items-start justify-between gap-10">
-        <div className="flex flex-wrap gap-2">
-          {task.category.map((item) => (
-            <span
-              key={item}
-              className="rounded-lg bg-[#fff0ea] px-2 py-1 text-[12px] font-black text-[#ff7a42]"
-            >
-              {item}
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="mb-2 flex flex-wrap gap-2">
+            <span className="rounded-full bg-[#fff0ea] px-3 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-[#FF6B35]">
+              {task.priority || "Medium"}
             </span>
-          ))}
+
+            <span
+              className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.08em] ${tone.badge}`}
+            >
+              {stageLabel(stage)}
+            </span>
+          </div>
+
+          <h3 className="text-[16px] font-black leading-6 text-black">
+            {task.title || task.name || "Main Task"}
+          </h3>
+
+          {task.description ? (
+            <p className="mt-2 text-[12px] font-semibold leading-5 text-[#777]">
+              {task.description}
+            </p>
+          ) : null}
         </div>
 
-        <span className="mt-1 h-1.5 w-1.5 rounded-full bg-[#ef4771]" />
-      </div>
-
-      <h4 className="mb-4 pr-8 text-[15px] font-black leading-5 text-black">
-        {task.title}
-      </h4>
-
-      {task.status === "progress" ? (
-        <div className="mb-4">
-          <p className="mb-2 text-[12px] font-medium text-[#777]">
-            {task.progress}% completed
+        <div className="shrink-0 rounded-2xl bg-[#fff7f2] px-3 py-2 text-right">
+          <p className="text-[9px] font-black uppercase tracking-[0.12em] text-[#999]">
+            Deadline
           </p>
-
-          <div className="h-1.5 overflow-hidden rounded-full bg-[#e5e5e5]">
-            <div
-              className="h-full rounded-full bg-[#FF6B35]"
-              style={{ width: `${task.progress}%` }}
-            />
-          </div>
+          <p className="mt-1 whitespace-nowrap text-[11px] font-black text-[#FF6B35]">
+            {formatDate(getTaskDeadline(task))}
+          </p>
         </div>
-      ) : task.status === "done" ? (
-        <p className="mb-4 text-[12px] font-bold text-[#20bf9f]">
-          Task finished
-        </p>
-      ) : null}
-
-      <div className="mb-4 flex items-center justify-between">
-        <div className="flex -space-x-2">
-          {task.members.map((member, index) => (
-            <AvatarBubble
-              key={`${task.id}-${member}-${index}`}
-              label={member}
-              index={index}
-            />
-          ))}
-
-          <AvatarBubble label={`+${task.extra}`} index={4} />
-        </div>
-
-        <p className="text-[12px] font-bold text-[#666]">
-          {doneCount}/{totalCount} subtasks
-        </p>
       </div>
 
-      <div className="border-t border-[#eeeeee] pt-3">
-        {task.subtasks.map((subtask, index) => (
-          <button
-            type="button"
-            key={`${task.id}-${index}`}
-            onClick={() => onToggleSubtask(task.id, index)}
-            className="mb-2 flex w-full items-center gap-2 text-left last:mb-0"
-          >
-            <span
-              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                subtask.done
-                  ? "border-[#FF6B35] bg-[#FF6B35] text-white"
-                  : "border-[#dddddd] bg-white"
-              }`}
-            >
-              {subtask.done ? <Check size={11} strokeWidth={3} /> : null}
-            </span>
-
-            <p
-              className={`text-[12px] font-medium ${
-                subtask.done ? "text-[#777] line-through" : "text-black"
-              }`}
-            >
-              {subtask.title}
-            </p>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ReviewPanel() {
-  return (
-    <aside className="rounded-2xl border border-[#e8e8e8] bg-white p-4 shadow-[0_8px_20px_rgba(0,0,0,0.07)]">
       <div className="mb-4">
-        <h3 className="text-[15px] font-bold text-black">Reviews</h3>
-        <p className="text-[11px] font-medium text-[#777]">
-          Send files to admin for review
-        </p>
-      </div>
-
-      <button
-        type="button"
-        className="mb-3 flex h-[90px] w-full flex-col items-center justify-center rounded-xl border border-[#f4c9b8] bg-[#fff4ef] text-center transition hover:border-[#FF6B35]"
-      >
-        <UploadCloud size={20} className="mb-2 text-[#FF6B35]" />
-        <p className="text-[10px] font-semibold text-[#777]">
-          Drag and drop your file here,
-          <br />
-          or <span className="text-[#FF6B35]">browse</span>
-        </p>
-        <p className="mt-1 text-[8px] text-[#aaa]">
-          Supports: PDF, JPG, PNG (Max. 25MB)
-        </p>
-      </button>
-
-      <button
-        type="button"
-        className="mb-8 flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#FF6B35] text-[12px] font-bold text-white shadow-[0_6px_14px_rgba(255,107,53,0.3)] transition hover:bg-[#f15f2c]"
-      >
-        <Send size={14} />
-        Send for Review
-      </button>
-
-      <h4 className="mb-3 text-[12px] font-bold text-black">Submitted files</h4>
-
-      <div className="space-y-3">
-        {reviewFiles.map((file) => (
-          <div key={file.id} className="rounded-lg border border-[#eeeeee] bg-white px-3 py-3">
-            <div className="mb-2 flex items-start justify-between gap-2">
-              <div className="flex min-w-0 items-start gap-2">
-                <div
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${file.iconClass}`}
-                >
-                  <FileText size={16} />
-                </div>
-
-                <div className="min-w-0">
-                  <p className="truncate text-[10px] font-black text-black">
-                    {file.name}
-                  </p>
-                  <p className="mt-0.5 text-[9px] text-[#999]">{file.meta}</p>
-                </div>
-              </div>
-
-              <span
-                className={`shrink-0 rounded-full px-2 py-1 text-[8px] font-bold ${file.statusClass}`}
-              >
-                {file.status}
-              </span>
-            </div>
-
-            {file.note ? (
-              <p className="mb-2 text-[9px] font-medium text-[#777]">{file.note}</p>
-            ) : null}
-
-            <div className="flex items-center gap-1">
-              <span className="text-[8px] text-[#aaa]">Reviewed by</span>
-              <div className="flex -space-x-1">
-                {file.reviewers.map((reviewer, index) => (
-                  <AvatarBubble
-                    key={`${file.id}-${reviewer}-${index}`}
-                    label={reviewer}
-                    index={index + 2}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </aside>
-  );
-}
-
-function Column({
-  title,
-  count,
-  colorClass,
-  tasks,
-  onAddTask,
-  onToggleSubtask,
-  onDeleteTask,
-}) {
-  return (
-    <section>
-      <StatusHeading title={title} count={count} colorClass={colorClass} />
-
-      <div className="space-y-3">
-        {tasks.map((task) => (
-          <TaskCard
-            key={task.id}
-            task={task}
-            onToggleSubtask={onToggleSubtask}
-            onDeleteTask={onDeleteTask}
-          />
-        ))}
-
-        {title !== "Done" ? (
-          <button
-            type="button"
-            onClick={onAddTask}
-            className="flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-[#f0cfc1] bg-[#fff3ee] text-[13px] font-semibold text-black transition hover:border-[#FF6B35] hover:text-[#FF6B35]"
-          >
-            <Plus size={15} />
-            Add task
-          </button>
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
-function AddTaskModal({
-  open,
-  form,
-  onClose,
-  onChange,
-  onSubtaskChange,
-  onAddSubtask,
-  onRemoveSubtask,
-  onSubmit,
-}) {
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/35 px-4">
-      <div className="w-full max-w-[640px] rounded-2xl bg-white p-6 shadow-2xl">
-        <div className="mb-5 flex items-center justify-between">
-          <div>
-            <h2 className="text-[22px] font-black text-black">Add Task</h2>
-            <p className="mt-1 text-[13px] font-medium text-[#777]">
-              Enter task details and add subtasks below.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-black transition hover:bg-red-50 hover:text-red-500"
-          >
-            <X size={18} />
-          </button>
+        <div className="mb-2 flex items-center justify-between text-[12px] font-black text-[#777]">
+          <span>{progress}% completed</span>
+          <span>
+            {completedCount}/{subtasks.length} subtasks
+          </span>
         </div>
 
-        <form onSubmit={onSubmit}>
-          <div className="grid grid-cols-2 gap-4">
-            <label className="col-span-2">
-              <span className="mb-2 block text-[12px] font-black text-[#555]">
-                Task Title
-              </span>
-              <input
-                value={form.title}
-                onChange={(event) => onChange("title", event.target.value)}
-                placeholder="Enter task title"
-                className="h-11 w-full rounded-lg border border-[#dedede] px-3 text-[14px] font-medium outline-none transition focus:border-[#FF6B35]"
-              />
-            </label>
+        <div className="h-2 overflow-hidden rounded-full bg-[#eef1f6]">
+          <div
+            className={`h-full rounded-full ${tone.progress} transition-all duration-700`}
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      </div>
 
-            <label>
-              <span className="mb-2 block text-[12px] font-black text-[#555]">
-                Category Tags
-              </span>
-              <input
-                value={form.categories}
-                onChange={(event) => onChange("categories", event.target.value)}
-                placeholder="Example: DESIGN, PRINT"
-                className="h-11 w-full rounded-lg border border-[#dedede] px-3 text-[14px] font-medium outline-none transition focus:border-[#FF6B35]"
-              />
-            </label>
+      <button
+        type="button"
+        onClick={() => onToggleExpand(task.id)}
+        className="flex h-11 w-full items-center justify-between rounded-2xl border border-[#ffe1d6] bg-[#fff8f4] px-4 text-left transition hover:bg-[#fff0ea]"
+      >
+        <span className="flex items-center gap-2">
+          <ClipboardList size={16} className="text-[#FF6B35]" />
+          <span className="text-[13px] font-black text-black">Subtasks</span>
+          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-black text-[#FF6B35]">
+            {subtasks.length}
+          </span>
+        </span>
 
-            <label>
-              <span className="mb-2 block text-[12px] font-black text-[#555]">
-                Members
-              </span>
-              <input
-                value={form.members}
-                onChange={(event) => onChange("members", event.target.value)}
-                placeholder="Example: SM, TL"
-                className="h-11 w-full rounded-lg border border-[#dedede] px-3 text-[14px] font-medium outline-none transition focus:border-[#FF6B35]"
-              />
-            </label>
+        <span className="flex items-center gap-2 text-[12px] font-black text-[#777]">
+          {expanded ? "Hide" : "Show"}
+          {expanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+        </span>
+      </button>
 
-            <label>
-              <span className="mb-2 block text-[12px] font-black text-[#555]">
-                Status
-              </span>
-              <select
-                value={form.status}
-                onChange={(event) => onChange("status", event.target.value)}
-                className="h-11 w-full rounded-lg border border-[#dedede] bg-white px-3 text-[14px] font-medium outline-none transition focus:border-[#FF6B35]"
-              >
-                <option value="todo">To Do</option>
-                <option value="progress">In Progress</option>
-                <option value="done">Done</option>
-              </select>
-            </label>
+      {expanded ? (
+        <div className="mt-4">
+          <div className="mb-4 space-y-2">
+            {subtasks.length ? (
+              subtasks.map((subtask) => {
+                const completed = isSubtaskDone(subtask);
 
-            <label>
-              <span className="mb-2 block text-[12px] font-black text-[#555]">
-                Progress %
-              </span>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                value={form.progress}
-                onChange={(event) => onChange("progress", event.target.value)}
-                className="h-11 w-full rounded-lg border border-[#dedede] px-3 text-[14px] font-medium outline-none transition focus:border-[#FF6B35]"
-              />
-            </label>
-          </div>
-
-          <div className="mt-5">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="block text-[12px] font-black text-[#555]">
-                Subtasks
-              </span>
-
-              <button
-                type="button"
-                onClick={onAddSubtask}
-                className="flex items-center gap-1 text-[12px] font-bold text-[#FF6B35]"
-              >
-                <Plus size={14} />
-                Add subtask
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {form.subtasks.map((subtask, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <input
-                    value={subtask}
-                    onChange={(event) => onSubtaskChange(index, event.target.value)}
-                    placeholder={`Subtask ${index + 1}`}
-                    className="h-10 min-w-0 flex-1 rounded-lg border border-[#dedede] px-3 text-[14px] font-medium outline-none transition focus:border-[#FF6B35]"
-                  />
-
-                  <button
-                    type="button"
-                    onClick={() => onRemoveSubtask(index)}
-                    disabled={form.subtasks.length === 1}
-                    className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-50 text-red-500 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
+                return (
+                  <div
+                    key={subtask.id}
+                    className={`flex items-center gap-3 rounded-2xl border px-3 py-3 transition-all duration-300 ${
+                      completed
+                        ? "border-emerald-100 bg-emerald-50/70"
+                        : "border-[#eeeeee] bg-[#fbfbfb]"
+                    }`}
                   >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              ))}
-            </div>
+                    <button
+                      type="button"
+                      disabled={actionLoading === `toggle-${subtask.id}`}
+                      onClick={() => onToggleSubtaskStatus(task, subtask)}
+                      className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition ${
+                        completed
+                          ? "border-emerald-500 bg-emerald-500 text-white"
+                          : "border-[#d0d5dd] bg-white text-[#999] hover:border-[#FF6B35] hover:text-[#FF6B35]"
+                      } disabled:opacity-60`}
+                      title={completed ? "Mark as pending" : "Mark as complete"}
+                    >
+                      {actionLoading === `toggle-${subtask.id}` ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : completed ? (
+                        <CheckCircle2 size={15} />
+                      ) : null}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => onOpenSubtask(task, subtask)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <p
+                        className={`truncate text-[13px] font-black ${
+                          completed
+                            ? "text-emerald-700 line-through decoration-2"
+                            : "text-black"
+                        }`}
+                      >
+                        {subtask.title || subtask.name || "Subtask"}
+                      </p>
+
+                      <p className="mt-0.5 text-[10px] font-semibold text-[#999]">
+                        {subtask.submittedAt
+                          ? `Submitted ${formatDateTime(subtask.submittedAt)}`
+                          : "Click to add description / file"}
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={actionLoading === `delete-${subtask.id}`}
+                      onClick={() => onDeleteSubtask(task, subtask)}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[#999] transition hover:bg-red-50 hover:text-red-500 disabled:opacity-60"
+                      title="Delete subtask"
+                    >
+                      {actionLoading === `delete-${subtask.id}` ? (
+                        <Loader2 size={15} className="animate-spin" />
+                      ) : (
+                        <Trash2 size={15} />
+                      )}
+                    </button>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="rounded-2xl border border-dashed border-[#e5e7eb] bg-[#fffaf7] px-4 py-5 text-center">
+                <p className="text-[12px] font-black text-black">
+                  No subtasks yet
+                </p>
+                <p className="mt-1 text-[11px] font-semibold text-[#888]">
+                  Add your first subtask below.
+                </p>
+              </div>
+            )}
           </div>
 
-          <div className="mt-6 flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-10 rounded-lg border border-[#dedede] px-5 text-[14px] font-bold text-black transition hover:bg-slate-50"
-            >
-              Cancel
-            </button>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              onAddSubtask(task);
+            }}
+            className="flex items-center gap-2 rounded-2xl border border-[#ffe1d6] bg-[#fff8f4] p-2"
+          >
+            <input
+              value={newSubtaskText}
+              onChange={(event) =>
+                setNewSubtaskText(task.id, event.target.value)
+              }
+              placeholder="Add subtask only..."
+              className="h-10 min-w-0 flex-1 bg-transparent px-3 text-[13px] font-bold text-black outline-none placeholder:text-[#aaa]"
+            />
 
             <button
               type="submit"
-              className="h-10 rounded-lg bg-[#FF6B35] px-5 text-[14px] font-bold text-white transition hover:bg-[#f15f2c]"
+              disabled={actionLoading === `add-${task.id}`}
+              className="flex h-10 shrink-0 items-center gap-2 rounded-xl bg-[#FF6B35] px-4 text-[12px] font-black text-white shadow-[0_10px_20px_rgba(255,107,53,0.22)] transition hover:bg-[#ef5f2d] disabled:opacity-60"
             >
-              Add Task
+              {actionLoading === `add-${task.id}` ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <Plus size={15} />
+              )}
+              Add
+            </button>
+          </form>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SubtaskSubmitModal({
+  selected,
+  description,
+  setDescription,
+  link,
+  setLink,
+  file,
+  setFile,
+  onClose,
+  onSubmit,
+  onDownload,
+  submitting,
+}) {
+  if (!selected) return null;
+
+  const { task, subtask } = selected;
+
+  function handleFileChange(event) {
+    const selectedFile = event.target.files?.[0];
+
+    if (!selectedFile) return;
+
+    const allowed = [
+      "application/pdf",
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ];
+
+    if (!allowed.includes(selectedFile.type)) {
+      toast.error("Only PDF, JPG, PNG, DOC, or DOCX files are allowed.");
+      return;
+    }
+
+    if (selectedFile.size > 5 * 1024 * 1024) {
+      toast.error("File must be 5MB or smaller.");
+      return;
+    }
+
+    setFile(selectedFile);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 px-5 py-8">
+      <div className="max-h-[92vh] w-full max-w-[900px] overflow-y-auto rounded-[28px] border border-[#eadfd9] bg-white shadow-[0_28px_90px_rgba(15,23,42,0.25)]">
+        <div className="rounded-t-[28px] bg-[#fff5ef] px-8 py-7">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-[30px] font-black leading-tight text-black">
+                {subtask.title || "Subtask"}
+              </h2>
+
+              <p className="mt-2 text-[13px] font-semibold text-[#777]">
+                Main task:{" "}
+                <span className="font-black text-[#FF6B35]">
+                  {task.title || task.name || "Task"}
+                </span>
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-red-200 bg-white text-red-500 transition hover:bg-red-50 disabled:opacity-50"
+            >
+              <X size={21} />
             </button>
           </div>
-        </form>
+        </div>
+
+        <div className="px-8 py-7">
+          <label className="mb-2 block text-[13px] font-black text-black">
+            Description Optional
+          </label>
+
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder="Add description..."
+            className="mb-5 min-h-[120px] w-full resize-none rounded-2xl border border-[#e5e7eb] px-4 py-4 text-[14px] font-semibold text-black outline-none transition focus:border-[#FF6B35]"
+          />
+
+          <label className="mb-2 block text-[13px] font-black text-black">
+            Add Attachment Optional
+          </label>
+
+          <label className="mb-4 flex min-h-[88px] cursor-pointer flex-col items-center justify-center rounded-2xl border border-[#ffd8c8] bg-[#fff8f4] px-4 py-5 text-center transition hover:bg-[#fff0ea]">
+            <UploadCloud size={22} className="mb-2 text-[#FF6B35]" />
+
+            {file ? (
+              <span className="text-[13px] font-black text-black">
+                {file.name}
+              </span>
+            ) : (
+              <span className="text-[13px] font-semibold text-[#777]">
+                Drag and drop your file here, or{" "}
+                <span className="font-black text-[#FF6B35]">browse</span>
+              </span>
+            )}
+
+            <span className="mt-1 text-[11px] font-semibold text-[#aaa]">
+              Supports PDF, JPG, PNG, DOC, DOCX. Max 5MB.
+            </span>
+
+            <input
+              type="file"
+              className="hidden"
+              accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+              onChange={handleFileChange}
+            />
+          </label>
+
+          {file ? (
+            <div className="mb-4 flex items-center justify-between rounded-xl border border-[#eeeeee] bg-white px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <Paperclip size={16} className="shrink-0 text-[#FF6B35]" />
+                <span className="truncate text-[13px] font-black text-black">
+                  {file.name}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setFile(null)}
+                className="text-[12px] font-black text-red-500"
+              >
+                Remove
+              </button>
+            </div>
+          ) : null}
+
+          {subtask.hasAttachment ? (
+            <button
+              type="button"
+              onClick={() => onDownload(subtask)}
+              className="mb-4 flex h-10 items-center gap-2 rounded-xl border border-orange-100 bg-[#fff7f2] px-4 text-[13px] font-black text-[#FF6B35]"
+            >
+              <Download size={16} />
+              Download submitted file
+            </button>
+          ) : null}
+
+          <div className="mb-3 flex items-center gap-4">
+            <div className="h-px flex-1 bg-[#eeeeee]" />
+            <span className="text-[12px] font-semibold text-[#aaa]">
+              or paste link
+            </span>
+            <div className="h-px flex-1 bg-[#eeeeee]" />
+          </div>
+
+          <div className="mb-5 flex h-12 items-center gap-3 rounded-2xl border border-[#e5e7eb] px-4">
+            <LinkIcon size={17} className="text-[#aaa]" />
+            <input
+              value={link}
+              onChange={(event) => setLink(event.target.value)}
+              placeholder="http://"
+              className="h-full flex-1 bg-transparent text-[14px] font-semibold text-black outline-none placeholder:text-[#aaa]"
+            />
+          </div>
+
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={onSubmit}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#FF6B35] text-[14px] font-black text-white shadow-[0_14px_28px_rgba(255,107,53,0.28)] transition hover:bg-[#ef5f2d] disabled:opacity-60"
+          >
+            {submitting ? <Loader2 size={18} className="animate-spin" /> : null}
+            Submit
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -761,330 +600,456 @@ function AddTaskModal({
 
 export default function UserProjectDetails() {
   const { projectId } = useParams();
-  const { profile } = useAuth();
+  const navigate = useNavigate();
 
-  const [project, setProject] = useState(fallbackProject);
-  const [tasks, setTasks] = useState(fallbackTasks);
+  const [project, setProject] = useState(null);
+  const [tasks, setTasks] = useState([]);
+  const [expandedTasks, setExpandedTasks] = useState({});
+  const [newSubtasks, setNewSubtasks] = useState({});
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState("");
 
-  const [taskModalOpen, setTaskModalOpen] = useState(false);
-  const [taskForm, setTaskForm] = useState(blankTaskForm);
+  const [selectedSubtask, setSelectedSubtask] = useState(null);
+  const [submissionDescription, setSubmissionDescription] = useState("");
+  const [submissionLink, setSubmissionLink] = useState("");
+  const [submissionFile, setSubmissionFile] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    let active = true;
+  async function loadBoard() {
+    try {
+      setLoading(true);
 
-    async function loadData() {
-      try {
-        const [projectResponse, taskResponse] = await Promise.allSettled([
-          getProjects(profile),
-          getTasks(profile),
-        ]);
+      const data = await getEmployeeProjectBoard(projectId);
 
-        if (!active) return;
+      setProject(data?.project || null);
+      setTasks(Array.isArray(data?.tasks) ? data.tasks : []);
 
-        if (projectResponse.status === "fulfilled") {
-          const rawProjects = Array.isArray(projectResponse.value)
-            ? projectResponse.value
-            : projectResponse.value?.projects || projectResponse.value?.data || [];
+      const initialExpanded = {};
+      (Array.isArray(data?.tasks) ? data.tasks : []).forEach((task) => {
+        initialExpanded[String(task.id)] = false;
+      });
 
-          const matchedProject =
-            rawProjects.find((item, index) => getProjectId(item, index) === projectId) ||
-            rawProjects[0];
-
-          if (matchedProject) {
-            setProject({
-              id: getProjectId(matchedProject),
-              name: getProjectName(matchedProject),
-              priority: matchedProject.priority || matchedProject.status || "High",
-              created: formatDateTime(
-                matchedProject.createdAt || matchedProject.created_at,
-                fallbackProject.created
-              ),
-              deadline: formatDateTime(
-                matchedProject.deadline ||
-                  matchedProject.dueDate ||
-                  matchedProject.endDate ||
-                  matchedProject.end_date,
-                fallbackProject.deadline
-              ),
-              description: getProjectDescription(matchedProject),
-            });
-          }
-        }
-
-        if (taskResponse.status === "fulfilled") {
-          const rawTasks = Array.isArray(taskResponse.value)
-            ? taskResponse.value
-            : taskResponse.value?.tasks || taskResponse.value?.data || [];
-
-          const projectTasks = rawTasks.filter((task) => {
-            const taskProjectId = getTaskProjectId(task);
-            return taskProjectId === projectId;
-          });
-
-          if (projectTasks.length > 0) {
-            setTasks(projectTasks.map(normalizeTask));
-          }
-        }
-      } catch {
-        setProject(fallbackProject);
-        setTasks(fallbackTasks);
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
-    }
-
-    if (profile) {
-      loadData();
-    } else {
+      setExpandedTasks(initialExpanded);
+    } catch (error) {
+      console.error("Employee project board load error:", error);
+      toast.error(error?.message || "Failed to load project.");
+      setProject(null);
+      setTasks([]);
+    } finally {
       setLoading(false);
     }
+  }
 
-    return () => {
-      active = false;
-    };
-  }, [profile, projectId]);
+  useEffect(() => {
+    loadBoard();
+  }, [projectId]);
 
   const groupedTasks = useMemo(() => {
-    return {
-      todo: tasks.filter((task) => task.status === "todo"),
-      progress: tasks.filter((task) => task.status === "progress"),
-      done: tasks.filter((task) => task.status === "done"),
+    const groups = {
+      todo: [],
+      progress: [],
+      review: [],
+      done: [],
     };
+
+    tasks.forEach((task) => {
+      groups[getTaskStage(task)].push(task);
+    });
+
+    return groups;
   }, [tasks]);
 
-  function openAddTask(status) {
-    setTaskForm({
-      ...blankTaskForm,
-      status,
-      progress: status === "done" ? 100 : status === "progress" ? 30 : 0,
+  function toggleTaskExpand(taskId) {
+    setExpandedTasks((current) => ({
+      ...current,
+      [String(taskId)]: !current[String(taskId)],
+    }));
+  }
+
+  function setNewSubtaskText(taskId, value) {
+    setNewSubtasks((current) => ({
+      ...current,
+      [taskId]: value,
+    }));
+  }
+
+  function replaceTask(updatedTask) {
+    if (!updatedTask?.id) return;
+
+    setTasks((current) =>
+      current.map((task) =>
+        String(task.id) === String(updatedTask.id) ? updatedTask : task
+      )
+    );
+  }
+
+  function openSubtask(task, subtask) {
+    setSelectedSubtask({
+      mode: "edit",
+      task,
+      subtask,
     });
-    setTaskModalOpen(true);
+
+    setSubmissionDescription(subtask.submissionDescription || "");
+    setSubmissionLink(subtask.submissionLink || "");
+    setSubmissionFile(null);
   }
 
-  function updateTaskForm(field, value) {
-    setTaskForm((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+  function closeSubtask() {
+    if (submitting) return;
+
+    setSelectedSubtask(null);
+    setSubmissionDescription("");
+    setSubmissionLink("");
+    setSubmissionFile(null);
   }
 
-  function updateSubtask(index, value) {
-    setTaskForm((prev) => ({
-      ...prev,
-      subtasks: prev.subtasks.map((subtask, subtaskIndex) =>
-        subtaskIndex === index ? value : subtask
-      ),
-    }));
-  }
-
-  function addSubtaskField() {
-    setTaskForm((prev) => ({
-      ...prev,
-      subtasks: [...prev.subtasks, ""],
-    }));
-  }
-
-  function removeSubtaskField(index) {
-    setTaskForm((prev) => ({
-      ...prev,
-      subtasks: prev.subtasks.filter((_, subtaskIndex) => subtaskIndex !== index),
-    }));
-  }
-
-  function submitAddTask(event) {
-    event.preventDefault();
-
-    const title = taskForm.title.trim();
+  async function handleAddSubtask(task) {
+    const title = String(newSubtasks[task.id] || "").trim();
 
     if (!title) {
-      alert("Please enter task title.");
+      toast.error("Subtask name is required.");
       return;
     }
 
-    const categories = taskForm.categories
-      .split(",")
-      .map((item) => item.trim().toUpperCase())
-      .filter(Boolean);
-
-    const members = taskForm.members
-      .split(",")
-      .map((item) => getInitials(item.trim()))
-      .filter(Boolean);
-
-    const cleanSubtasks = taskForm.subtasks
-      .map((item) => item.trim())
-      .filter(Boolean)
-      .map((item) => ({
-        title: item,
-        done: taskForm.status === "done",
-      }));
-
-    const finalSubtasks =
-      cleanSubtasks.length > 0
-        ? cleanSubtasks
-        : [
-            {
-              title: "Checklist item",
-              done: taskForm.status === "done",
-            },
-          ];
-
-    const manualProgress = Math.max(
-      0,
-      Math.min(100, Number(taskForm.progress) || 0)
-    );
-
-    const finalProgress =
-      taskForm.status === "done"
-        ? 100
-        : taskForm.status === "todo"
-        ? 0
-        : manualProgress;
-
-    setTasks((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        status: taskForm.status,
-        category: categories.length ? categories : ["NEW"],
+    setSelectedSubtask({
+      mode: "create",
+      task,
+      subtask: {
+        id: "__new__",
         title,
-        progress: finalProgress,
-        members: members.length ? members : ["ME"],
-        extra: 0,
-        subtasks: finalSubtasks,
+        name: title,
+        status: "Pending",
+        completed: false,
       },
-    ]);
+    });
 
-    setTaskModalOpen(false);
-    setTaskForm(blankTaskForm);
+    setSubmissionDescription("");
+    setSubmissionLink("");
+    setSubmissionFile(null);
   }
 
-  function toggleSubtask(taskId, subtaskIndex) {
-    setTasks((prev) =>
-      prev.map((task) => {
-        if (task.id !== taskId) return task;
+  async function handleToggleSubtaskStatus(task, subtask) {
+    const completed = !isSubtaskDone(subtask);
 
-        const updatedSubtasks = task.subtasks.map((subtask, index) =>
-          index === subtaskIndex
-            ? {
-                ...subtask,
-                done: !subtask.done,
-              }
-            : subtask
+    try {
+      setActionLoading(`toggle-${subtask.id}`);
+
+      const data = await updateEmployeeSubtaskStatus(subtask.id, completed);
+
+      replaceTask(data?.task);
+
+      toast.success(
+        completed
+          ? "Subtask marked as completed."
+          : "Subtask moved back to pending."
+      );
+    } catch (error) {
+      console.error("Toggle subtask status error:", error);
+      toast.error(error?.message || "Failed to update subtask.");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function handleSubmitSubtask() {
+    if (!selectedSubtask?.task?.id || !selectedSubtask?.subtask) return;
+
+    const description = submissionDescription.trim();
+    const link = submissionLink.trim();
+
+    try {
+      setSubmitting(true);
+
+      let createdSubtask = selectedSubtask.subtask;
+      let updatedTask = null;
+
+      if (selectedSubtask.mode === "create") {
+        const createData = await createEmployeeSubtask(
+          selectedSubtask.task.id,
+          selectedSubtask.subtask.title
         );
 
-        const updatedProgress = calculateTaskProgress(updatedSubtasks, task.progress);
-        const updatedStatus = calculateTaskStatus(task.status, updatedSubtasks);
+        createdSubtask = createData?.subtask;
+        updatedTask = createData?.task;
 
-        return {
-          ...task,
-          subtasks: updatedSubtasks,
-          progress: updatedStatus === "done" ? 100 : updatedProgress,
-          status: updatedStatus,
-        };
-      })
+        if (!createdSubtask?.id) {
+          throw new Error("Subtask was not created properly.");
+        }
+      }
+
+      const submitData = await submitEmployeeSubtask(createdSubtask.id, {
+        description,
+        link,
+        file: submissionFile,
+      });
+
+      const finalTask = submitData?.task || updatedTask;
+
+      replaceTask(finalTask);
+
+      setExpandedTasks((current) => ({
+        ...current,
+        [String(selectedSubtask.task.id)]: true,
+      }));
+
+      setNewSubtasks((current) => ({
+        ...current,
+        [selectedSubtask.task.id]: "",
+      }));
+
+      toast.success("Subtask saved. Tick the checkbox to complete it.");
+      closeSubtask();
+    } catch (error) {
+      console.error("Submit subtask error:", error);
+      toast.error(error?.message || "Failed to submit subtask.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDeleteSubtask(task, subtask) {
+    const confirmed = window.confirm(`Delete subtask "${subtask.title}"?`);
+
+    if (!confirmed) return;
+
+    try {
+      setActionLoading(`delete-${subtask.id}`);
+
+      const data = await deleteEmployeeSubtask(subtask.id);
+
+      replaceTask(data?.task);
+
+      toast.success("Subtask deleted.");
+    } catch (error) {
+      console.error("Delete subtask error:", error);
+      toast.error(error?.message || "Failed to delete subtask.");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function handleDownloadAttachment(subtask) {
+    try {
+      await downloadEmployeeSubtaskAttachment(
+        subtask.id,
+        subtask.attachmentOriginalName || "subtask-attachment"
+      );
+    } catch (error) {
+      toast.error(error?.message || "Failed to download attachment.");
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white px-8 py-8 text-black">
+        <div className="flex min-h-[360px] items-center justify-center rounded-3xl border border-[#eeeeee] bg-white">
+          <div className="flex items-center gap-3 text-[15px] font-black text-[#777]">
+            <Loader2 size={20} className="animate-spin text-[#FF6B35]" />
+            Loading project board...
+          </div>
+        </div>
+      </div>
     );
   }
 
-  function deleteTask(taskId) {
-    const confirmDelete = window.confirm("Delete this task?");
+  if (!project) {
+    return (
+      <div className="min-h-screen bg-white px-8 py-8 text-black">
+        <button
+          type="button"
+          onClick={() => navigate("/dashboard/projects")}
+          className="mb-5 flex h-10 items-center gap-2 rounded-xl bg-[#FF6B35] px-4 text-[13px] font-black text-white"
+        >
+          <ChevronLeft size={17} />
+          Back
+        </button>
 
-    if (!confirmDelete) return;
-
-    setTasks((prev) => prev.filter((task) => task.id !== taskId));
+        <div className="flex min-h-[360px] items-center justify-center rounded-3xl border border-[#eeeeee] bg-[#fffaf7] text-center">
+          <div>
+            <ClipboardList size={36} className="mx-auto mb-3 text-[#FF6B35]" />
+            <h2 className="text-[20px] font-black text-black">
+              Project not found
+            </h2>
+            <p className="mt-2 text-[14px] font-semibold text-[#777]">
+              This project is missing or not assigned to you.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
   }
 
+  const columns = [
+    {
+      key: "todo",
+      title: "To Do",
+      tasks: groupedTasks.todo,
+    },
+    {
+      key: "progress",
+      title: "In Progress",
+      tasks: groupedTasks.progress,
+    },
+    {
+      key: "review",
+      title: "Under Review",
+      tasks: groupedTasks.review,
+    },
+    {
+      key: "done",
+      title: "Done",
+      tasks: groupedTasks.done,
+    },
+  ];
+
   return (
-    <div className="min-h-[calc(100vh-68px)] bg-white px-9 py-8 text-black">
-      {loading ? (
-        <p className="text-[14px] font-semibold text-[#777]">Loading project...</p>
-      ) : null}
-
-      <section className="mb-7 flex min-h-[112px] items-center justify-between rounded-2xl bg-[#fff8f0] px-10 py-7">
-        <div className="flex items-center gap-4">
-          <h1 className="text-[32px] font-medium tracking-[-0.03em] text-[#4b4b4b]">
-            {project.name}
-          </h1>
-
-          <span className="rounded-full bg-[#ef405b] px-5 py-2 text-[13px] font-black text-white">
-            {project.priority || "High"}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-12">
+    <div className="min-h-screen bg-white px-8 py-7 text-black">
+      <div className="mb-7 rounded-[28px] bg-[#fff8f4] px-8 py-7 shadow-[0_14px_36px_rgba(15,23,42,0.06)]">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <p className="text-[12px] font-black uppercase text-[#5d5d5d]">
-              Created
-            </p>
-            <p className="mt-1 text-[14px] font-semibold text-[#FF6B35]">
-              {project.created}
+            <button
+              type="button"
+              onClick={() => navigate("/dashboard/projects")}
+              className="mb-5 flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-[13px] font-black text-[#FF6B35] shadow-sm transition hover:bg-[#fff0ea]"
+            >
+              <ChevronLeft size={17} />
+              Back to Projects
+            </button>
+
+            <h1 className="text-[34px] font-black leading-tight text-black">
+              {project.name || project.title || "Project"}
+            </h1>
+
+            <p className="mt-3 max-w-[900px] text-[14px] font-semibold leading-6 text-[#777]">
+              {project.description ||
+                "Complete all subtasks to send the main task for admin review."}
             </p>
           </div>
 
-          <div>
-            <p className="text-[12px] font-black uppercase text-[#5d5d5d]">
-              Deadline
-            </p>
-            <p className="mt-1 text-[14px] font-semibold text-[#FF6B35]">
-              {project.deadline}
-            </p>
+          <div className="grid min-w-[260px] grid-cols-2 gap-4 rounded-2xl bg-white/70 p-4">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.1em] text-[#777]">
+                Created
+              </p>
+              <p className="mt-1 text-[13px] font-black text-[#FF6B35]">
+                {formatDate(project.createdAt)}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.1em] text-[#777]">
+                Deadline
+              </p>
+              <p className="mt-1 text-[13px] font-black text-[#FF6B35]">
+                {formatDate(project.deadline)}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.1em] text-[#777]">
+                Department
+              </p>
+              <p className="mt-1 text-[13px] font-black text-black">
+                {project.department || "-"}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.1em] text-[#777]">
+                Progress
+              </p>
+              <p className="mt-1 text-[13px] font-black text-black">
+                {project.progress || 0}%
+              </p>
+            </div>
           </div>
         </div>
-      </section>
-
-      <section className="mb-12">
-        <h2 className="mb-3 text-[14px] font-black text-[#555]">Description</h2>
-        <p className="max-w-[1160px] text-[14px] font-medium leading-7 text-[#8a8a8a]">
-          {project.description}
-        </p>
-      </section>
-
-      <div className="grid grid-cols-[1fr_1fr_1fr_270px] gap-5">
-        <Column
-          title="To Do"
-          count={groupedTasks.todo.length}
-          colorClass="bg-[#7c8795]"
-          tasks={groupedTasks.todo}
-          onAddTask={() => openAddTask("todo")}
-          onToggleSubtask={toggleSubtask}
-          onDeleteTask={deleteTask}
-        />
-
-        <Column
-          title="In Progress"
-          count={groupedTasks.progress.length}
-          colorClass="bg-[#4e8af7]"
-          tasks={groupedTasks.progress}
-          onAddTask={() => openAddTask("progress")}
-          onToggleSubtask={toggleSubtask}
-          onDeleteTask={deleteTask}
-        />
-
-        <Column
-          title="Done"
-          count={groupedTasks.done.length}
-          colorClass="bg-[#20bf9f]"
-          tasks={groupedTasks.done}
-          onAddTask={() => openAddTask("done")}
-          onToggleSubtask={toggleSubtask}
-          onDeleteTask={deleteTask}
-        />
-
-        <ReviewPanel />
       </div>
 
-      <AddTaskModal
-        open={taskModalOpen}
-        form={taskForm}
-        onClose={() => setTaskModalOpen(false)}
-        onChange={updateTaskForm}
-        onSubtaskChange={updateSubtask}
-        onAddSubtask={addSubtaskField}
-        onRemoveSubtask={removeSubtaskField}
-        onSubmit={submitAddTask}
+      {tasks.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-[#e5e7eb] bg-[#fffaf7] px-8 py-16 text-center">
+          <ClipboardList size={42} className="mx-auto mb-4 text-[#FF6B35]" />
+          <h2 className="text-[22px] font-black text-black">
+            No main task assigned yet
+          </h2>
+          <p className="mx-auto mt-2 max-w-[520px] text-[14px] font-semibold leading-6 text-[#777]">
+            Employee can add subtasks only after Admin creates at least one main
+            task and assigns it to this employee.
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-5 xl:grid-cols-4">
+          {columns.map((column) => {
+            const tone = stageTone(column.key);
+
+            return (
+              <section
+                key={column.key}
+                className="min-h-[520px] rounded-[28px] border border-[#eeeeee] bg-[#fafafa] p-4"
+              >
+                <div className="mb-4 flex items-center justify-between px-1">
+                  <div className="flex items-center gap-3">
+                    <span className={`h-3 w-3 rounded-full ${tone.dot}`} />
+                    <h2 className={`text-[17px] font-black ${tone.header}`}>
+                      {column.title}
+                    </h2>
+                  </div>
+
+                  <span className="flex h-7 min-w-7 items-center justify-center rounded-full bg-white px-2 text-[12px] font-black text-[#777] shadow-sm">
+                    {column.tasks.length}
+                  </span>
+                </div>
+
+                <div className="space-y-4 transition-all duration-500">
+                  {column.tasks.length ? (
+                    column.tasks.map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        expanded={Boolean(expandedTasks[String(task.id)])}
+                        onToggleExpand={toggleTaskExpand}
+                        newSubtaskText={newSubtasks[task.id] || ""}
+                        setNewSubtaskText={setNewSubtaskText}
+                        onAddSubtask={handleAddSubtask}
+                        onOpenSubtask={openSubtask}
+                        onToggleSubtaskStatus={handleToggleSubtaskStatus}
+                        onDeleteSubtask={handleDeleteSubtask}
+                        actionLoading={actionLoading}
+                      />
+                    ))
+                  ) : (
+                    <EmptyColumn stage={column.key} />
+                  )}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="mt-6 rounded-2xl border border-orange-100 bg-[#fff7f2] px-5 py-4">
+        <p className="text-[13px] font-black text-black">Status rule:</p>
+        <p className="mt-1 text-[13px] font-semibold leading-6 text-[#777]">
+          Submit saves description, file, or link only. Tick the checkbox to
+          complete a subtask. Once all subtasks are completed, the main task moves
+          to <b> Under Review</b>. Only after Admin approves it, the task moves
+          to <b> Done</b>.
+        </p>
+      </div>
+
+      <SubtaskSubmitModal
+        selected={selectedSubtask}
+        description={submissionDescription}
+        setDescription={setSubmissionDescription}
+        link={submissionLink}
+        setLink={setSubmissionLink}
+        file={submissionFile}
+        setFile={setSubmissionFile}
+        onClose={closeSubtask}
+        onSubmit={handleSubmitSubtask}
+        onDownload={handleDownloadAttachment}
+        submitting={submitting}
       />
     </div>
   );

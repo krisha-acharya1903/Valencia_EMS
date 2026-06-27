@@ -1,0 +1,139 @@
+.csv-import-card {
+  width: 100%;
+  background: #ffffff;
+  border-radius: 22px;
+  padding: 22px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 12px 35px rgba(15, 23, 42, 0.08);
+  margin-bottom: 24px;
+}
+
+.csv-import-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.csv-import-header h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.csv-import-header p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.csv-import-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.csv-upload-box {
+  cursor: pointer;
+  border: 2px dashed rgba(255, 107, 53, 0.45);
+  background: rgba(255, 107, 53, 0.06);
+  border-radius: 18px;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: 0.2s ease;
+}
+
+.csv-upload-box:hover {
+  border-color: #ff6b35;
+  background: rgba(255, 107, 53, 0.1);
+}
+
+.csv-upload-box input {
+  display: none;
+}
+
+.csv-upload-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #ff6b35;
+}
+
+.csv-upload-box small {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.csv-preview {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.csv-preview-top {
+  padding: 14px 16px;
+  background: #f9fafb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.csv-preview-top strong {
+  font-size: 14px;
+  color: #111827;
+}
+
+.csv-import-btn {
+  border: none;
+  background: #ff6b35;
+  color: #ffffff;
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.csv-import-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.csv-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.csv-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 650px;
+}
+
+.csv-table-wrap th,
+.csv-table-wrap td {
+  padding: 12px 14px;
+  text-align: left;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 13px;
+}
+
+.csv-table-wrap th {
+  color: #6b7280;
+  font-weight: 800;
+  background: #ffffff;
+}
+
+.csv-table-wrap td {
+  color: #111827;
+}
+
+.csv-more-text {
+  display: block;
+  padding: 12px 16px;
+  color: #6b7280;
+}

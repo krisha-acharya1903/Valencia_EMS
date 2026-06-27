@@ -44,10 +44,16 @@ export function subscribeToFirebaseAuth(callback) {
     .then((data) => {
       if (data?.user) {
         callback(data.user);
-      } else {
-        clearAuthSession();
-        callback(null);
+        return;
       }
+
+      if (data?.id || data?.email || data?.role) {
+        callback(data);
+        return;
+      }
+
+      clearAuthSession();
+      callback(null);
     })
     .catch(() => {
       clearAuthSession();
@@ -57,7 +63,7 @@ export function subscribeToFirebaseAuth(callback) {
   return () => {};
 }
 
-export async function login(identifier, password) {
+export async function login(identifier, password, remember = false) {
   const email = String(identifier || "").trim().toLowerCase();
 
   clearAuthSession();
@@ -72,7 +78,7 @@ export async function login(identifier, password) {
     throw new Error("Invalid login response from server.");
   }
 
-  saveAuthSession(data.token, data.user);
+  saveAuthSession(data.token, data.user, remember);
 
   return data.user;
 }
@@ -104,16 +110,23 @@ export async function registerUser(payload) {
     throw new Error("Phone number must be exactly 10 digits.");
   }
 
-  clearAuthSession();
+  const existingToken = getToken();
 
   const data = await apiPost("/auth/register", clean);
 
-  if (!data?.token || !data?.user) {
-    clearAuthSession();
+  if (!data?.user) {
     throw new Error("Invalid register response from server.");
   }
 
-  saveAuthSession(data.token, data.user);
+  /*
+    Important:
+    If admin/superadmin is creating a new employee account,
+    we should NOT replace the current admin/superadmin session
+    with the newly created employee session.
+  */
+  if (!existingToken && data?.token && data?.user) {
+    saveAuthSession(data.token, data.user, false);
+  }
 
   return data.user;
 }

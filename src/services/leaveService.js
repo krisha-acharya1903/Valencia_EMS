@@ -62,10 +62,13 @@ async function apiRequest(path, options = {}) {
     throw new Error("Missing authorization token. Please logout and login again.");
   }
 
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
+
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       Authorization: `Bearer ${token}`,
       ...(options.headers || {}),
     },
@@ -128,7 +131,7 @@ function extractOne(data) {
   return data;
 }
 
-function normalizeLeaveRequest(leave = {}) {
+export function normalizeLeaveRequest(leave = {}) {
   return {
     ...leave,
 
@@ -161,17 +164,9 @@ function normalizeLeaveRequest(leave = {}) {
       leave.email ||
       "",
 
-    leaveType:
-      leave.leaveType ||
-      leave.leave_type ||
-      leave.type ||
-      "Leave",
+    leaveType: leave.leaveType || leave.leave_type || leave.type || "Leave",
 
-    reason:
-      leave.reason ||
-      leave.message ||
-      leave.description ||
-      "",
+    reason: leave.reason || leave.message || leave.description || "",
 
     startDate:
       leave.startDate ||
@@ -189,15 +184,10 @@ function normalizeLeaveRequest(leave = {}) {
       leave.date ||
       "",
 
-    status:
-      leave.status ||
-      "pending",
+    status: String(leave.status || "pending").toLowerCase(),
 
     adminComment:
-      leave.adminComment ||
-      leave.admin_comment ||
-      leave.comment ||
-      "",
+      leave.adminComment || leave.admin_comment || leave.comment || "",
 
     createdAt:
       leave.createdAt ||
@@ -207,10 +197,38 @@ function normalizeLeaveRequest(leave = {}) {
       leave.date ||
       "",
 
-    updatedAt:
-      leave.updatedAt ||
-      leave.updated_at ||
+    updatedAt: leave.updatedAt || leave.updated_at || "",
+
+    reviewedAt: leave.reviewedAt || leave.reviewed_at || "",
+
+    hasAttachment: Boolean(
+      leave.hasAttachment ||
+        leave.has_attachment ||
+        leave.attachmentPath ||
+        leave.attachment_path ||
+        leave.attachmentUrl ||
+        leave.attachment_url
+    ),
+
+    attachmentFilename:
+      leave.attachmentFilename || leave.attachment_filename || "",
+
+    attachmentOriginalName:
+      leave.attachmentOriginalName ||
+      leave.attachment_original_name ||
+      leave.originalName ||
+      leave.original_name ||
       "",
+
+    attachmentMimeType:
+      leave.attachmentMimeType || leave.attachment_mime_type || "",
+
+    attachmentSize: Number(leave.attachmentSize || leave.attachment_size || 0),
+
+    attachmentUrl:
+      leave.attachmentUrl ||
+      leave.attachment_url ||
+      (leave.id || leave.leaveId ? `/api/leaves/${leave.id || leave.leaveId}/attachment` : ""),
   };
 }
 
@@ -220,12 +238,41 @@ function toCreatePayload(payload = {}) {
     reason: payload.reason || payload.message || payload.description || "",
     start_date: payload.startDate || payload.start_date || payload.fromDate || "",
     end_date: payload.endDate || payload.end_date || payload.toDate || "",
+    emergency_contact:
+      payload.emergencyContact || payload.emergency_contact || "",
   };
 }
 
-export async function getLeaveRequests(profile = {}) {
+function isFileLike(value) {
+  return (
+    value &&
+    typeof value === "object" &&
+    typeof value.name === "string" &&
+    typeof value.size === "number"
+  );
+}
+
+function buildLeaveFormData(payload = {}, attachment = null) {
+  const finalPayload = toCreatePayload(payload);
+  const formData = new FormData();
+
+  Object.entries(finalPayload).forEach(([key, value]) => {
+    formData.append(key, value || "");
+  });
+
+  const finalAttachment = attachment || payload.attachment || payload.file || null;
+
+  if (finalAttachment) {
+    formData.append("attachment", finalAttachment);
+  }
+
+  return formData;
+}
+
+export async function getLeaveRequests() {
   try {
     const data = await tryApiRequests([
+      "/leaves/me",
       "/leave-requests",
       "/leaves",
       "/leave",
@@ -240,16 +287,25 @@ export async function getLeaveRequests(profile = {}) {
   }
 }
 
-export async function createLeaveRequest(profileOrPayload, maybePayload) {
-  const payload = maybePayload || profileOrPayload || {};
+export async function createLeaveRequest(firstArg = {}, secondArg = null, thirdArg = null) {
+  let payload = firstArg || {};
+  let attachment = null;
 
-  const data = await tryApiRequests(
-    ["/leave-requests", "/leaves", "/leave", "/attendance/leaves"],
-    {
-      method: "POST",
-      body: JSON.stringify(toCreatePayload(payload)),
-    }
-  );
+  if (isFileLike(secondArg)) {
+    attachment = secondArg;
+  } else if (secondArg && typeof secondArg === "object") {
+    payload = secondArg;
+    attachment = thirdArg || secondArg.attachment || secondArg.file || null;
+  } else {
+    attachment = thirdArg || firstArg.attachment || firstArg.file || null;
+  }
+
+  const formData = buildLeaveFormData(payload, attachment);
+
+  const data = await tryApiRequests(["/leaves", "/leave-requests"], {
+    method: "POST",
+    body: formData,
+  });
 
   return normalizeLeaveRequest(extractOne(data));
 }
@@ -267,9 +323,9 @@ export async function reviewLeaveRequest(profile, leaveId, status, adminComment 
 
   const data = await tryApiRequests(
     [
+      `/leaves/${leaveId}/review`,
       `/leave-requests/${leaveId}/review`,
       `/leave-requests/${leaveId}`,
-      `/leaves/${leaveId}/review`,
       `/leaves/${leaveId}`,
       `/leave/${leaveId}/review`,
       `/leave/${leaveId}`,
@@ -316,6 +372,51 @@ export async function deleteLeaveRequest(profile, leaveId) {
       method: "DELETE",
     }
   );
+
+  return true;
+}
+
+export async function downloadLeaveAttachment(leaveId, filename = "leave-attachment") {
+  if (!leaveId) {
+    throw new Error("Leave request ID is missing.");
+  }
+
+  const token = getAuthToken();
+
+  if (!token) {
+    throw new Error("Missing authorization token. Please logout and login again.");
+  }
+
+  const response = await fetch(`${API_BASE}/leaves/${leaveId}/attachment`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    let message = "Failed to download attachment.";
+
+    try {
+      const data = await response.json();
+      message = data?.message || message;
+    } catch {
+      // ignore
+    }
+
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename || "leave-attachment";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  window.URL.revokeObjectURL(url);
 
   return true;
 }
