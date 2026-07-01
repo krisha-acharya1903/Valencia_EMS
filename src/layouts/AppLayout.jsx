@@ -1,5 +1,6 @@
 import {
   Bell,
+  Building2,
   CalendarCheck,
   ChevronLeft,
   ChevronRight,
@@ -385,14 +386,19 @@ function EmployeeSidebar({ darkMode, onToggleDarkMode }) {
       icon: MessageCircle,
     },
     ...(isJayMore
-      ? [
-          {
-            label: "Employees",
-            path: "/dashboard/employees",
-            icon: UsersRound,
-          },
-        ]
-      : []),
+  ? [
+      {
+        label: "Employees",
+        path: "/dashboard/employees",
+        icon: UsersRound,
+      },
+      {
+        label: "Divisions",
+        path: "/dashboard/divisions",
+        icon: Building2,
+      },
+    ]
+  : []),
     {
       label: "Profile",
       path: "/dashboard/profile",
@@ -542,6 +548,9 @@ export default function AppLayout() {
   });
 
   const [searchText, setSearchText] = useState(() => searchParams.get("q") || "");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
 
   useEffect(() => {
     localStorage.setItem("employee_theme", darkMode ? "dark" : "light");
@@ -553,6 +562,65 @@ export default function AppLayout() {
   useEffect(() => {
     setSearchText(searchParams.get("q") || "");
   }, [location.pathname, searchParams]);
+
+  useEffect(() => {
+  const query = String(searchText || "").trim();
+
+  if (!query) {
+    setSearchResults([]);
+    setSearchOpen(false);
+    setSearchLoading(false);
+    return;
+  }
+
+  let active = true;
+
+  const timer = window.setTimeout(async () => {
+    try {
+      setSearchLoading(true);
+
+      const data = await apiRequest(`/search?q=${encodeURIComponent(query)}`);
+      const results = data?.results || {};
+
+      if (!active) return;
+
+      const users = Array.isArray(results.users)
+        ? results.users.map((item) => ({ ...item, resultType: "employee" }))
+        : [];
+
+      const projects = Array.isArray(results.projects)
+        ? results.projects.map((item) => ({ ...item, resultType: "project" }))
+        : [];
+
+      const tasks = Array.isArray(results.tasks)
+        ? results.tasks.map((item) => ({ ...item, resultType: "task" }))
+        : [];
+
+      const activity = Array.isArray(results.activity)
+        ? results.activity.map((item) => ({ ...item, resultType: "activity" }))
+        : [];
+
+      setSearchResults([...users, ...projects, ...tasks, ...activity].slice(0, 8));
+      setSearchOpen(true);
+    } catch (error) {
+      console.error("Employee search error:", error);
+
+      if (active) {
+        setSearchResults([]);
+        setSearchOpen(true);
+      }
+    } finally {
+      if (active) {
+        setSearchLoading(false);
+      }
+    }
+  }, 300);
+
+  return () => {
+    active = false;
+    window.clearTimeout(timer);
+  };
+}, [searchText]);
 
   function updateSearch(value) {
     setSearchText(value);
@@ -570,6 +638,83 @@ export default function AppLayout() {
       replace: true,
     });
   }
+
+  function getSearchResultTitle(item) {
+  return (
+    item?.name ||
+    item?.fullName ||
+    item?.full_name ||
+    item?.title ||
+    item?.projectName ||
+    item?.project_name ||
+    item?.taskName ||
+    item?.task_name ||
+    item?.email ||
+    "Search result"
+  );
+}
+
+function getSearchResultSubtitle(item) {
+  if (item.resultType === "employee") {
+    return item.email || item.department || "Employee";
+  }
+
+  if (item.resultType === "project") {
+    return item.department || item.status || "Project";
+  }
+
+  if (item.resultType === "task") {
+    return item.projectName || item.project_name || item.status || "Task";
+  }
+
+  return item.message || item.actionType || item.action_type || "Activity";
+}
+
+function getSearchResultLabel(item) {
+  if (item.resultType === "employee") return "Employee";
+  if (item.resultType === "project") return "Project";
+  if (item.resultType === "task") return "Task";
+  return "Activity";
+}
+
+function openSearchResult(item) {
+  setSearchOpen(false);
+
+  if (item.resultType === "employee") {
+    navigate("/dashboard/employees");
+    return;
+  }
+
+  if (item.resultType === "project") {
+    const projectId = item.id || item.projectId || item.project_id || item.uid;
+
+    if (projectId) {
+      navigate(`/dashboard/projects/${projectId}`);
+      return;
+    }
+
+    navigate("/dashboard/projects");
+    return;
+  }
+
+  if (item.resultType === "task") {
+    const projectId =
+      item.projectId ||
+      item.project_id ||
+      item.parentProjectId ||
+      item.parent_project_id;
+
+    if (projectId) {
+      navigate(`/dashboard/projects/${projectId}`);
+      return;
+    }
+
+    navigate("/dashboard/projects");
+    return;
+  }
+
+  navigate("/dashboard");
+}
 
   function goBack() {
     if (window.history.length > 1) {
@@ -679,30 +824,111 @@ export default function AppLayout() {
               </button>
             </div>
 
-            <div
-              className={`flex h-10 flex-1 items-center gap-4 rounded-xl border px-5 ${
+            <div className="relative flex-1">
+  <div
+    className={`flex h-10 items-center gap-4 rounded-xl border px-5 ${
+      darkMode
+        ? "border-[#263244] bg-[#111827]"
+        : "border-[#e8e8e8] bg-white"
+    }`}
+  >
+    <Search
+      size={20}
+      className={darkMode ? "text-slate-400" : "text-[#6b6b7a]"}
+    />
+
+    <input
+      type="text"
+      value={searchText}
+      onFocus={() => {
+        if (searchText.trim()) {
+          setSearchOpen(true);
+        }
+      }}
+      onChange={(event) => updateSearch(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && searchResults[0]) {
+          openSearchResult(searchResults[0]);
+        }
+
+        if (event.key === "Escape") {
+          setSearchOpen(false);
+        }
+      }}
+      placeholder="Search projects, tasks, recent activity..."
+      className={`h-full w-full bg-transparent text-[14px] font-medium outline-none ${
+        darkMode
+          ? "text-white placeholder:text-slate-400"
+          : "text-black placeholder:text-[#7d7d8a]"
+      }`}
+    />
+  </div>
+
+  {searchOpen && searchText.trim() ? (
+    <div
+      className={`absolute left-0 right-0 top-full z-[999] mt-2 overflow-hidden rounded-2xl border shadow-[0_18px_55px_rgba(15,23,42,0.16)] ${
+        darkMode
+          ? "border-[#263244] bg-[#111827]"
+          : "border-slate-200 bg-white"
+      }`}
+    >
+      {searchLoading ? (
+        <div
+          className={`px-4 py-5 text-sm font-semibold ${
+            darkMode ? "text-slate-400" : "text-slate-500"
+          }`}
+        >
+          Searching...
+        </div>
+      ) : searchResults.length ? (
+        <div className="max-h-[360px] overflow-y-auto">
+          {searchResults.map((item, index) => (
+            <button
+              key={`${item.resultType}-${item.id || item.uid || index}`}
+              type="button"
+              onClick={() => openSearchResult(item)}
+              className={`flex w-full items-start justify-between gap-4 border-b px-4 py-4 text-left transition last:border-b-0 ${
                 darkMode
-                  ? "border-[#263244] bg-[#111827]"
-                  : "border-[#e8e8e8] bg-white"
+                  ? "border-[#263244] hover:bg-[#172033]"
+                  : "border-slate-100 hover:bg-orange-50"
               }`}
             >
-              <Search
-                size={20}
-                className={darkMode ? "text-slate-400" : "text-[#6b6b7a]"}
-              />
+              <span className="min-w-0">
+                <span
+                  className={`block truncate text-sm font-black ${
+                    darkMode ? "text-white" : "text-[#061638]"
+                  }`}
+                >
+                  {getSearchResultTitle(item)}
+                </span>
 
-              <input
-                type="text"
-                value={searchText}
-                onChange={(event) => updateSearch(event.target.value)}
-                placeholder="Search projects, tasks, recent activity..."
-                className={`h-full w-full bg-transparent text-[14px] font-medium outline-none ${
-                  darkMode
-                    ? "text-white placeholder:text-slate-400"
-                    : "text-black placeholder:text-[#7d7d8a]"
-                }`}
-              />
-            </div>
+                <span
+                  className={`mt-1 block truncate text-xs font-semibold ${
+                    darkMode ? "text-slate-400" : "text-slate-500"
+                  }`}
+                >
+                  {getSearchResultSubtitle(item)}
+                </span>
+              </span>
+
+              <span className="shrink-0 rounded-full bg-orange-50 px-3 py-1 text-[11px] font-black uppercase text-[#FF6B35]">
+                {getSearchResultLabel(item)}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div
+          className={`px-4 py-5 text-sm font-semibold ${
+            darkMode ? "text-slate-400" : "text-slate-500"
+          }`}
+        >
+          No matching results found.
+        </div>
+      )}
+    </div>
+  ) : null}
+</div>
 
             <EmployeeNotificationBell darkMode={darkMode} />
           </div>

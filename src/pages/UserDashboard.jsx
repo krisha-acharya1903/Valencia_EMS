@@ -168,20 +168,6 @@ function getProjectTitle(project, index) {
   );
 }
 
-function getProjectPriority(project) {
-  const priority = clean(project?.priority || project?.importance || "medium");
-
-  if (priority.includes("high")) return "high";
-  if (priority.includes("low")) return "low";
-  return "medium";
-}
-
-function getPriorityClasses(priority) {
-  if (priority === "high") return "bg-[#ff4f78] text-white";
-  if (priority === "low") return "bg-[#38bdf8] text-white";
-  return "bg-[#ffb347] text-white";
-}
-
 function getTasks(project) {
   const tasks =
     project?.tasks ||
@@ -295,24 +281,15 @@ function getVisibleAssignees(project) {
 
 function ProjectCard({ project, index }) {
   const title = getProjectTitle(project, index);
-  const priority = getProjectPriority(project);
   const stats = getProjectStats(project);
   const assignees = getVisibleAssignees(project);
 
   return (
     <div className="rounded-xl border border-[#efefef] bg-white px-4 py-4 shadow-[0_7px_22px_rgba(0,0,0,0.08)]">
-      <div className="mb-5 flex items-start justify-between gap-4">
+      <div className="mb-5">
         <h3 className="line-clamp-1 text-[14px] font-black text-[#ff6b35]">
           {title}
         </h3>
-
-        <span
-          className={`rounded-full px-4 py-1 text-[9px] font-black uppercase ${getPriorityClasses(
-            priority
-          )}`}
-        >
-          {priority}
-        </span>
       </div>
 
       <div className="mb-2 flex items-center gap-3">

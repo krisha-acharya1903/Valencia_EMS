@@ -277,11 +277,7 @@ const adminNavItems = [
     path: "/admin/users",
     icon: UsersRound,
   },
-  {
-    label: "Divisions",
-    path: "/admin/departments",
-    icon: Building2,
-  },
+  
   {
     label: "Projects",
     path: "/admin/projects",
@@ -571,6 +567,9 @@ function AdminShell({ children }) {
   const { profile, logout } = useAuth();
 
   const [searchText, setSearchText] = useState(() => searchParams.get("q") || "");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
 
   const name = profile?.name || profile?.fullName || "Admin";
   const email = profile?.email || "admin@valencia.com";
@@ -578,6 +577,80 @@ function AdminShell({ children }) {
   useEffect(() => {
     setSearchText(searchParams.get("q") || "");
   }, [location.pathname, searchParams]);
+
+  useEffect(() => {
+  const query = String(searchText || "").trim();
+
+  if (!query) {
+    setSearchResults([]);
+    setSearchOpen(false);
+    setSearchLoading(false);
+    return;
+  }
+
+  let active = true;
+
+  const timer = window.setTimeout(async () => {
+    try {
+      setSearchLoading(true);
+
+      const data = await apiRequest(
+        `/search?q=${encodeURIComponent(query)}`
+      );
+
+      if (!active) return;
+
+      const results = data?.results || {};
+
+      const users = Array.isArray(results.users)
+        ? results.users.map((item) => ({
+            ...item,
+            resultType: "employee",
+          }))
+        : [];
+
+      const projects = Array.isArray(results.projects)
+        ? results.projects.map((item) => ({
+            ...item,
+            resultType: "project",
+          }))
+        : [];
+
+      const tasks = Array.isArray(results.tasks)
+        ? results.tasks.map((item) => ({
+            ...item,
+            resultType: "task",
+          }))
+        : [];
+
+      const activity = Array.isArray(results.activity)
+        ? results.activity.map((item) => ({
+            ...item,
+            resultType: "activity",
+          }))
+        : [];
+
+      setSearchResults([...users, ...projects, ...tasks, ...activity].slice(0, 8));
+      setSearchOpen(true);
+    } catch (error) {
+      console.error("Admin search error:", error);
+
+      if (active) {
+        setSearchResults([]);
+        setSearchOpen(true);
+      }
+    } finally {
+      if (active) {
+        setSearchLoading(false);
+      }
+    }
+  }, 300);
+
+  return () => {
+    active = false;
+    window.clearTimeout(timer);
+  };
+}, [searchText]);
 
   function updateSearch(value) {
     setSearchText(value);
@@ -596,18 +669,124 @@ function AdminShell({ children }) {
     });
   }
 
-  function goBack() {
-    if (window.history.length > 1) {
-      navigate(-1);
+  function getSearchResultTitle(item) {
+  return (
+    item?.name ||
+    item?.fullName ||
+    item?.full_name ||
+    item?.title ||
+    item?.projectName ||
+    item?.project_name ||
+    item?.taskName ||
+    item?.task_name ||
+    item?.email ||
+    "Search result"
+  );
+}
+
+function getSearchResultSubtitle(item) {
+  if (item.resultType === "employee") {
+    return item.email || item.department || "Employee";
+  }
+
+  if (item.resultType === "project") {
+    return item.department || item.status || "Project";
+  }
+
+  if (item.resultType === "task") {
+    return item.projectName || item.project_name || item.status || "Task";
+  }
+
+  return item.message || item.type || "Activity";
+}
+
+function getSearchResultLabel(item) {
+  if (item.resultType === "employee") return "Employee";
+  if (item.resultType === "project") return "Project";
+  if (item.resultType === "task") return "Task";
+  return "Activity";
+}
+
+function openSearchResult(item) {
+  setSearchOpen(false);
+
+  if (item.resultType === "employee") {
+    const userId = item.id || item.userId || item.user_id || item.uid;
+
+    if (userId) {
+      navigate(`/admin/users/${userId}/progress`);
       return;
     }
 
-    navigate("/admin", { replace: false });
+    navigate("/admin/users");
+    return;
   }
 
-  function goForward() {
-    navigate(1);
+  if (item.resultType === "project") {
+    const projectId = item.id || item.projectId || item.project_id || item.uid;
+
+    if (projectId) {
+      navigate(`/admin/projects/${projectId}`);
+      return;
+    }
+
+    navigate("/admin/projects");
+    return;
   }
+
+  if (item.resultType === "task") {
+    const projectId = item.projectId || item.project_id || item.parentProjectId || item.parent_project_id;
+
+    if (projectId) {
+      navigate(`/admin/projects/${projectId}`);
+      return;
+    }
+
+    navigate("/admin/projects");
+    return;
+  }
+
+  navigate("/admin/notifications");
+}
+
+  const adminPageOrder = [
+  "/admin",
+  "/admin/users",
+  "/admin/projects",
+  "/admin/attendance-management",
+  "/admin/notifications",
+  "/admin/chatbox",
+];
+
+function getCurrentAdminPageIndex() {
+  const pathname = location.pathname;
+
+  const exactIndex = adminPageOrder.findIndex((path) => pathname === path);
+
+  if (exactIndex >= 0) return exactIndex;
+
+  if (pathname.startsWith("/admin/users")) return 1;
+  if (pathname.startsWith("/admin/projects")) return 2;
+  if (pathname.startsWith("/admin/attendance-management")) return 3;
+  if (pathname.startsWith("/admin/notifications")) return 4;
+  if (pathname.startsWith("/admin/chatbox")) return 5;
+
+  return 0;
+}
+
+function goBack() {
+  const currentIndex = getCurrentAdminPageIndex();
+  const previousIndex = Math.max(currentIndex - 1, 0);
+
+  navigate(adminPageOrder[previousIndex]);
+}
+
+function goForward() {
+  const currentIndex = getCurrentAdminPageIndex();
+  const nextIndex = Math.min(currentIndex + 1, adminPageOrder.length - 1);
+
+  navigate(adminPageOrder[nextIndex]);
+}
 
   const initials =
     name
@@ -753,16 +932,68 @@ function AdminShell({ children }) {
             {hideSearchBar ? (
               <div className="flex-1" />
             ) : (
-              <div className="ml-auto flex h-11 max-w-[720px] flex-1 items-center gap-3 rounded-xl border border-[#e8edf4] bg-white px-4">
-                <Search size={19} className="text-slate-400" />
-                <input
-                  type="text"
-                  value={searchText}
-                  onChange={(event) => updateSearch(event.target.value)}
-                  placeholder="Search employees, projects, tasks..."
-                  className="h-full w-full bg-transparent text-sm font-semibold text-[#061638] outline-none placeholder:text-slate-400"
-                />
-              </div>
+              <div className="relative ml-auto max-w-[720px] flex-1">
+  <div className="flex h-11 items-center gap-3 rounded-xl border border-[#e8edf4] bg-white px-4">
+    <Search size={19} className="text-slate-400" />
+
+    <input
+      type="text"
+      value={searchText}
+      onFocus={() => {
+        if (searchText.trim()) {
+          setSearchOpen(true);
+        }
+      }}
+      onChange={(event) => updateSearch(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && searchResults[0]) {
+          openSearchResult(searchResults[0]);
+        }
+      }}
+      placeholder="Search employees, projects, tasks..."
+      className="h-full w-full bg-transparent text-sm font-semibold text-[#061638] outline-none placeholder:text-slate-400"
+    />
+  </div>
+
+  {searchOpen && searchText.trim() ? (
+    <div className="absolute left-0 right-0 top-13 z-[999] mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_55px_rgba(15,23,42,0.16)]">
+      {searchLoading ? (
+        <div className="px-4 py-5 text-sm font-semibold text-slate-500">
+          Searching...
+        </div>
+      ) : searchResults.length ? (
+        <div className="max-h-[360px] overflow-y-auto">
+          {searchResults.map((item, index) => (
+            <button
+              key={`${item.resultType}-${item.id || item.uid || index}`}
+              type="button"
+              onClick={() => openSearchResult(item)}
+              className="flex w-full items-start justify-between gap-4 border-b border-slate-100 px-4 py-4 text-left transition last:border-b-0 hover:bg-orange-50"
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-black text-[#061638]">
+                  {getSearchResultTitle(item)}
+                </span>
+
+                <span className="mt-1 block truncate text-xs font-semibold text-slate-500">
+                  {getSearchResultSubtitle(item)}
+                </span>
+              </span>
+
+              <span className="shrink-0 rounded-full bg-orange-50 px-3 py-1 text-[11px] font-black uppercase text-[#FF6B35]">
+                {getSearchResultLabel(item)}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="px-4 py-5 text-sm font-semibold text-slate-500">
+          No matching results found.
+        </div>
+      )}
+    </div>
+  ) : null}
+</div>
             )}
 
             <AdminNotificationBell />
@@ -836,6 +1067,7 @@ export default function App() {
         <Route path="attendance" element={<UserAttendanceDetail />} />
         <Route path="chatbox" element={<UserChatbox />} />
         <Route path="employees" element={<JayEmployees />} />
+        <Route path="divisions" element={<Departments />} />
         <Route path="profile" element={<UserProfile />} />
       </Route>
 
@@ -875,14 +1107,7 @@ export default function App() {
         }
       />
 
-      <Route
-        path="/admin/departments"
-        element={
-          <AdminPage>
-            <Departments />
-          </AdminPage>
-        }
-      />
+      <Route path="/admin/departments" element={<Navigate to="/admin" replace />} />
 
       <Route
         path="/admin/projects"
@@ -942,7 +1167,7 @@ export default function App() {
         path="/users/:userId/attendance"
         element={<LegacyUserAttendanceRedirect />}
       />
-      <Route path="/departments" element={<Navigate to="/admin/departments" replace />} />
+      <Route path="/departments" element={<Navigate to="/dashboard/divisions" replace />} />
       <Route path="/projects" element={<Navigate to="/admin/projects" replace />} />
       <Route path="/projects/:projectId" element={<LegacyProjectRedirect />} />
       <Route path="/work-progress" element={<Navigate to="/admin" replace />} />

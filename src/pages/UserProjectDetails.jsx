@@ -51,15 +51,20 @@ function getTaskStage(task) {
     Boolean(task?.reviewed_at) ||
     Boolean(task?.reviewedBy) ||
     Boolean(task?.reviewed_by);
+    const sentBack = wasTaskSentBack(task);
 
   /*
     Done should happen ONLY after admin approval.
     If all subtasks are completed but admin has not approved,
     show task in Under Review.
   */
-  if (subtasks.length > 0 && completedCount === subtasks.length && !hasAdminReview) {
-    return "review";
-  }
+  if (sentBack) {
+  return "progress";
+}
+
+if (subtasks.length > 0 && completedCount === subtasks.length && !hasAdminReview) {
+  return "review";
+}
 
   if (
     status === "under review" ||
@@ -131,6 +136,38 @@ function getTaskDeadline(task) {
     task?.to_date ||
     ""
   );
+}
+
+function getTaskReviewRemark(task) {
+  return String(
+    task?.reviewRemark ||
+      task?.review_remark ||
+      task?.adminRemark ||
+      task?.admin_remark ||
+      task?.remark ||
+      task?.remarks ||
+      task?.reviewNote ||
+      task?.review_note ||
+      ""
+  ).trim();
+}
+
+function getTaskSentBackAt(task) {
+  return (
+    task?.sentBackAt ||
+    task?.sent_back_at ||
+    task?.rejectedAt ||
+    task?.rejected_at ||
+    ""
+  );
+}
+
+function wasTaskSentBack(task) {
+  const remark = getTaskReviewRemark(task);
+  const sentBackAt = getTaskSentBackAt(task);
+  const status = clean(task?.status);
+
+  return Boolean(remark) || Boolean(sentBackAt) || status === "sent back";
 }
 
 function getProgress(task) {
@@ -234,9 +271,7 @@ function TaskCard({
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap gap-2">
-            <span className="rounded-full bg-[#fff0ea] px-3 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-[#FF6B35]">
-              {task.priority || "Medium"}
-            </span>
+            
 
             <span
               className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.08em] ${tone.badge}`}
@@ -254,6 +289,46 @@ function TaskCard({
               {task.description}
             </p>
           ) : null}
+
+          {wasTaskSentBack(task) && getTaskReviewRemark(task) ? (
+  <div className="mt-3 rounded-2xl border border-orange-200 bg-[#fff7f2] px-4 py-3">
+    <div className="mb-1 flex items-center justify-between gap-3">
+      <p className="text-[11px] font-black uppercase tracking-[0.12em] text-[#FF6B35]">
+        Admin Remark
+      </p>
+
+      {getTaskSentBackAt(task) ? (
+        <span className="text-[10px] font-black text-[#999]">
+          {formatDateTime(getTaskSentBackAt(task))}
+        </span>
+      ) : null}
+    </div>
+
+    <p className="whitespace-pre-wrap text-[12px] font-semibold leading-5 text-[#5f2a14]">
+      {getTaskReviewRemark(task)}
+    </p>
+  </div>
+) : null}
+
+          {wasTaskSentBack(task) && getTaskReviewRemark(task) ? (
+  <div className="mt-3 rounded-2xl border border-orange-200 bg-[#fff7f2] px-4 py-3">
+    <div className="mb-1 flex items-center justify-between gap-3">
+      <p className="text-[11px] font-black uppercase tracking-[0.12em] text-[#FF6B35]">
+        Admin Remark
+      </p>
+
+      {getTaskSentBackAt(task) ? (
+        <span className="text-[10px] font-black text-[#999]">
+          {formatDateTime(getTaskSentBackAt(task))}
+        </span>
+      ) : null}
+    </div>
+
+    <p className="whitespace-pre-wrap text-[12px] font-semibold leading-5 text-[#5f2a14]">
+      {getTaskReviewRemark(task)}
+    </p>
+  </div>
+) : null}
         </div>
 
         <div className="shrink-0 rounded-2xl bg-[#fff7f2] px-3 py-2 text-right">
@@ -690,8 +765,19 @@ export default function UserProjectDetails() {
       subtask,
     });
 
-    setSubmissionDescription(subtask.submissionDescription || "");
-    setSubmissionLink(subtask.submissionLink || "");
+    setSubmissionDescription(
+  subtask.submissionDescription ||
+    subtask.submission_description ||
+    subtask.description ||
+    ""
+);
+
+setSubmissionLink(
+  subtask.submissionLink ||
+    subtask.submission_link ||
+    subtask.link ||
+    ""
+);
     setSubmissionFile(null);
   }
 

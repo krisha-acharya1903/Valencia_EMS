@@ -1,21 +1,30 @@
 import {
   Download,
+  Hash,
   Loader2,
+  MessageCircle,
+  MoreVertical,
   Paperclip,
+  Pencil,
   Search,
   Send,
   Trash2,
-  X,
+  Users,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
 import {
+  deleteChatMessage,
   downloadChatAttachment,
+  editChatMessage,
   getChatMessages,
+  getChatRoomMessages,
+  getChatRooms,
   getChatUsers,
   normalizeChatUser,
   sendChatMessage,
+  sendChatRoomMessage,
 } from "../services/chatService";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
@@ -100,12 +109,21 @@ function getMessageAttachmentName(message) {
   );
 }
 
-function Avatar({ initials, color = "bg-indigo-500", size = "h-10 w-10" }) {
+function isRoomItem(item) {
+  return item?.chatType === "room" || item?.type === "general" || item?.type === "project";
+}
+
+function getItemKey(item) {
+  if (!item) return "";
+  return `${isRoomItem(item) ? "room" : "person"}-${item.id}`;
+}
+
+function Avatar({ initials, color = "bg-indigo-500", size = "h-10 w-10", icon = null }) {
   return (
     <div
       className={`flex ${size} shrink-0 items-center justify-center rounded-full ${color} text-[13px] font-black text-white`}
     >
-      {initials || "U"}
+      {icon || initials || "U"}
     </div>
   );
 }
@@ -120,6 +138,17 @@ function Badge({ children }) {
   );
 }
 
+function SectionHeader({ title, count }) {
+  return (
+    <div className="mb-2 mt-4 flex items-center justify-between px-2 first:mt-1">
+      <p className="text-[12px] font-black uppercase tracking-[0.14em] text-[#777]">
+        {title}
+      </p>
+      <span className="text-[12px] font-black text-[#777]">{count}</span>
+    </div>
+  );
+}
+
 function SidebarRow({
   title,
   subtitle,
@@ -127,18 +156,19 @@ function SidebarRow({
   initials,
   color,
   badge,
+  icon,
   onClick,
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-center justify-between rounded-2xl px-3 py-3 text-left transition ${
+      className={`mb-1 flex w-full items-center justify-between rounded-2xl px-3 py-3 text-left transition ${
         active ? "border border-orange-200 bg-[#fff0ea]" : "hover:bg-[#fff5f1]"
       }`}
     >
       <div className="flex min-w-0 items-center gap-3">
-        <Avatar initials={initials} color={color} size="h-9 w-9" />
+        <Avatar initials={initials} color={color} size="h-9 w-9" icon={icon} />
 
         <div className="min-w-0">
           <p
@@ -167,7 +197,9 @@ function MessageAttachment({ message }) {
 
   async function handleDownload() {
     try {
-      await downloadChatAttachment(message.id, getMessageAttachmentName(message));
+      await downloadChatAttachment(message.id, getMessageAttachmentName(message), {
+        roomMessage: Boolean(message.roomId || message.room_id),
+      });
     } catch (error) {
       console.error("Download chat attachment error:", error);
       toast.error(error?.message || "Failed to download attachment.");
@@ -186,7 +218,7 @@ function MessageAttachment({ message }) {
   );
 }
 
-function MessageBubble({ message, currentUser }) {
+function MessageBubble({ message, currentUser, onEdit, onDelete }) {
   const mine =
     Boolean(message.mine) || String(message.senderId) === String(currentUser.id);
 
@@ -197,10 +229,34 @@ function MessageBubble({ message, currentUser }) {
 
   if (mine) {
     return (
-      <div className="mb-7 flex justify-end">
+      <div className="group mb-7 flex justify-end">
         <div className="flex max-w-[460px] items-start gap-3">
           <div className="min-w-0">
             <div className="mb-1 flex justify-end gap-2 text-[12px]">
+              <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+                <MoreVertical size={13} className="text-[#999]" />
+
+                {text ? (
+                  <button
+                    type="button"
+                    onClick={() => onEdit(message)}
+                    className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-black text-slate-600 transition hover:bg-blue-50 hover:text-blue-600"
+                  >
+                    <Pencil size={11} />
+                    Edit
+                  </button>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={() => onDelete(message)}
+                  className="flex items-center gap-1 rounded-full bg-red-50 px-2 py-1 text-[10px] font-black text-red-500 transition hover:bg-red-100"
+                >
+                  <Trash2 size={11} />
+                  Delete
+                </button>
+              </div>
+
               <span className="font-medium text-[#777]">{time}</span>
               <span className="font-black text-black">You</span>
             </div>
@@ -244,12 +300,6 @@ function MessageBubble({ message, currentUser }) {
               </p>
             ) : null}
 
-            <button
-              type="button"
-              className="hidden"
-              aria-hidden="true"
-            />
-
             {message?.hasAttachment ? (
               <button
                 type="button"
@@ -257,7 +307,10 @@ function MessageBubble({ message, currentUser }) {
                   try {
                     await downloadChatAttachment(
                       message.id,
-                      getMessageAttachmentName(message)
+                      getMessageAttachmentName(message),
+                      {
+                        roomMessage: Boolean(message.roomId || message.room_id),
+                      }
                     );
                   } catch (error) {
                     toast.error(error?.message || "Failed to download attachment.");
@@ -297,10 +350,12 @@ export default function ChatPage({ mode = "employee" }) {
     };
   }, [profile]);
 
+  const [rooms, setRooms] = useState([]);
   const [people, setPeople] = useState([]);
-  const [activePerson, setActivePerson] = useState(null);
+  const [activeItem, setActiveItem] = useState(null);
   const [messages, setMessages] = useState([]);
 
+  const [roomsLoading, setRoomsLoading] = useState(true);
   const [peopleLoading, setPeopleLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -308,6 +363,40 @@ export default function ChatPage({ mode = "employee" }) {
   const [searchText, setSearchText] = useState("");
   const [messageText, setMessageText] = useState("");
   const [attachment, setAttachment] = useState(null);
+
+  const generalRooms = useMemo(() => {
+    return rooms.filter((room) => room.type === "general" || room.id === "general");
+  }, [rooms]);
+
+  const projectRooms = useMemo(() => {
+    return rooms.filter((room) => room.type === "project");
+  }, [rooms]);
+
+  const filteredGeneralRooms = useMemo(() => {
+    const query = lower(searchText);
+
+    if (!query) return generalRooms;
+
+    return generalRooms.filter((room) => {
+      return (
+        lower(room.name).includes(query) ||
+        lower(room.subtitle).includes(query)
+      );
+    });
+  }, [generalRooms, searchText]);
+
+  const filteredProjectRooms = useMemo(() => {
+    const query = lower(searchText);
+
+    if (!query) return projectRooms;
+
+    return projectRooms.filter((room) => {
+      return (
+        lower(room.name).includes(query) ||
+        lower(room.subtitle).includes(query)
+      );
+    });
+  }, [projectRooms, searchText]);
 
   const filteredPeople = useMemo(() => {
     const query = lower(searchText);
@@ -325,38 +414,74 @@ export default function ChatPage({ mode = "employee" }) {
     });
   }, [people, searchText]);
 
-  async function loadPeople() {
+  async function loadRoomsAndPeople() {
     try {
+      setRoomsLoading(true);
       setPeopleLoading(true);
 
-      const users = await getChatUsers();
-      const visibleUsers = users.map((user, index) => ({
+      const [loadedRooms, loadedUsers] = await Promise.allSettled([
+        getChatRooms(),
+        getChatUsers(),
+      ]);
+
+      const visibleRooms =
+        loadedRooms.status === "fulfilled" ? loadedRooms.value : [];
+
+      const visibleUsers =
+        loadedUsers.status === "fulfilled" ? loadedUsers.value : [];
+
+      if (loadedRooms.status === "rejected") {
+        console.error("Load chat rooms error:", loadedRooms.reason);
+        toast.error(loadedRooms.reason?.message || "Failed to load chat rooms.");
+      }
+
+      if (loadedUsers.status === "rejected") {
+        console.error("Load chat users error:", loadedUsers.reason);
+        toast.error(loadedUsers.reason?.message || "Failed to load people.");
+      }
+
+      const normalizedRooms = visibleRooms.map((room, index) => ({
+        ...room,
+        initials: room.initials || (room.type === "general" ? "GC" : "PC"),
+        color:
+          room.color ||
+          (room.type === "general" ? "bg-[#FF6B35]" : getAvatarColor(index + 1)),
+      }));
+
+      const normalizedUsers = visibleUsers.map((user, index) => ({
         ...user,
         initials: user.initials || getInitials(user.name),
         color: user.color || getAvatarColor(index),
       }));
 
-      setPeople(visibleUsers);
+      setRooms(normalizedRooms);
+      setPeople(normalizedUsers);
 
-      setActivePerson((current) => {
-        if (current && visibleUsers.some((user) => user.id === current.id)) {
+      setActiveItem((current) => {
+        const allItems = [...normalizedRooms, ...normalizedUsers];
+
+        if (
+          current &&
+          allItems.some((item) => getItemKey(item) === getItemKey(current))
+        ) {
           return current;
         }
 
-        return visibleUsers[0] || null;
+        return (
+          normalizedRooms.find((room) => room.id === "general") ||
+          normalizedRooms[0] ||
+          normalizedUsers[0] ||
+          null
+        );
       });
-    } catch (error) {
-      console.error("Load chat users error:", error);
-      toast.error(error?.message || "Failed to load people.");
-      setPeople([]);
-      setActivePerson(null);
     } finally {
+      setRoomsLoading(false);
       setPeopleLoading(false);
     }
   }
 
-  async function loadMessages(receiverId = activePerson?.id) {
-    if (!receiverId) {
+  async function loadMessages(item = activeItem) {
+    if (!item?.id) {
       setMessages([]);
       return;
     }
@@ -364,8 +489,28 @@ export default function ChatPage({ mode = "employee" }) {
     try {
       setMessagesLoading(true);
 
-      const loadedMessages = await getChatMessages(receiverId);
+      const loadedMessages = isRoomItem(item)
+        ? await getChatRoomMessages(item.id)
+        : await getChatMessages(item.id);
+
       setMessages(loadedMessages);
+      if (isRoomItem(item)) {
+  setRooms((current) =>
+    current.map((room) =>
+      String(room.id) === String(item.id)
+        ? { ...room, unreadCount: 0, unread_count: 0 }
+        : room
+    )
+  );
+} else {
+  setPeople((current) =>
+    current.map((person) =>
+      String(person.id) === String(item.id)
+        ? { ...person, unreadCount: 0, unread_count: 0 }
+        : person
+    )
+  );
+}
     } catch (error) {
       console.error("Load messages error:", error);
       toast.error(error?.message || "Failed to load messages.");
@@ -376,16 +521,16 @@ export default function ChatPage({ mode = "employee" }) {
   }
 
   useEffect(() => {
-    loadPeople();
+    loadRoomsAndPeople();
   }, []);
 
   useEffect(() => {
-    if (activePerson?.id) {
-      loadMessages(activePerson.id);
+    if (activeItem?.id) {
+      loadMessages(activeItem);
     } else {
       setMessages([]);
     }
-  }, [activePerson?.id]);
+  }, [activeItem?.id, activeItem?.chatType, activeItem?.type]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -396,7 +541,7 @@ export default function ChatPage({ mode = "employee" }) {
     }, 80);
 
     return () => window.clearTimeout(timeout);
-  }, [messages, messagesLoading, activePerson?.id]);
+  }, [messages, messagesLoading, activeItem?.id]);
 
   function validateAndSetFile(file) {
     if (!file) return;
@@ -430,8 +575,8 @@ export default function ChatPage({ mode = "employee" }) {
   async function handleSend(event) {
     event.preventDefault();
 
-    if (!activePerson?.id) {
-      toast.error("Select a person first.");
+    if (!activeItem?.id) {
+      toast.error("Select a chat first.");
       return;
     }
 
@@ -444,16 +589,24 @@ export default function ChatPage({ mode = "employee" }) {
     setSending(true);
 
     try {
-      await sendChatMessage({
-        receiverId: activePerson.id,
-        text: cleanText,
-        attachment,
-      });
+      if (isRoomItem(activeItem)) {
+        await sendChatRoomMessage({
+          roomId: activeItem.id,
+          text: cleanText,
+          attachment,
+        });
+      } else {
+        await sendChatMessage({
+          receiverId: activeItem.id,
+          text: cleanText,
+          attachment,
+        });
+      }
 
       setMessageText("");
       removeAttachment();
 
-      await loadMessages(activePerson.id);
+      await loadMessages(activeItem);
 
       window.setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({
@@ -469,6 +622,72 @@ export default function ChatPage({ mode = "employee" }) {
     }
   }
 
+    function isActiveRoomMessage(message) {
+    return Boolean(message?.roomId || message?.room_id || isRoomItem(activeItem));
+  }
+
+  async function handleEditExistingMessage(message) {
+    const currentText = getMessageText(message);
+
+    if (!currentText) {
+      toast.error("Only text messages can be edited.");
+      return;
+    }
+
+    const nextText = window.prompt("Edit your message:", currentText);
+
+    if (nextText === null) return;
+
+    const cleanText = nextText.trim();
+
+    if (!cleanText) {
+      toast.error("Message cannot be empty.");
+      return;
+    }
+
+    if (cleanText === currentText.trim()) return;
+
+    try {
+      setSending(true);
+
+      await editChatMessage({
+        messageId: message.id,
+        text: cleanText,
+        roomMessage: isActiveRoomMessage(message),
+      });
+
+      toast.success("Message updated.");
+      await loadMessages(activeItem);
+    } catch (error) {
+      console.error("Edit message error:", error);
+      toast.error(error?.message || "Failed to edit message.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function handleDeleteExistingMessage(message) {
+    const confirmed = window.confirm("Delete this message permanently?");
+
+    if (!confirmed) return;
+
+    try {
+      setSending(true);
+
+      await deleteChatMessage(message.id, {
+        roomMessage: isActiveRoomMessage(message),
+      });
+
+      toast.success("Message deleted.");
+      await loadMessages(activeItem);
+    } catch (error) {
+      console.error("Delete message error:", error);
+      toast.error(error?.message || "Failed to delete message.");
+    } finally {
+      setSending(false);
+    }
+  }
+  
   function handleTextareaKeyDown(event) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -476,57 +695,108 @@ export default function ChatPage({ mode = "employee" }) {
     }
   }
 
-  const headerTitle = activePerson?.name || "Chatbox";
-  const headerSubtitle = activePerson
-    ? activePerson.subtitle || activePerson.department || activePerson.email
-    : "Select a Software team member to start chatting";
+  const headerTitle = activeItem?.name || "Chatbox";
+  const headerSubtitle = activeItem
+    ? activeItem.subtitle ||
+      activeItem.department ||
+      activeItem.email ||
+      "Start chatting"
+    : "Select a chat to start messaging";
+
+  const isLoadingList = roomsLoading || peopleLoading;
 
   return (
     <div className="h-[calc(100vh-76px)] overflow-hidden bg-white px-7 py-6 text-black">
-      <div className="grid h-full grid-cols-[280px_1fr] overflow-hidden rounded-2xl border border-[#e8e8e8] bg-white shadow-[0_8px_24px_rgba(0,0,0,0.07)] max-lg:grid-cols-1">
-        <aside className="flex min-h-0 flex-col border-r border-[#e8e8e8] bg-[#fbfbfb] max-lg:h-[280px] max-lg:border-b max-lg:border-r-0">
+      <div className="grid h-full grid-cols-[310px_1fr] overflow-hidden rounded-2xl border border-[#e8e8e8] bg-white shadow-[0_8px_24px_rgba(0,0,0,0.07)] max-lg:grid-cols-1">
+        <aside className="flex min-h-0 flex-col border-r border-[#e8e8e8] bg-[#fbfbfb] max-lg:h-[320px] max-lg:border-b max-lg:border-r-0">
           <div className="border-b border-[#e8e8e8] p-3">
             <div className="flex h-10 items-center gap-2 rounded-xl border border-[#e8e8e8] bg-white px-3">
               <Search size={15} className="text-[#999]" />
               <input
                 value={searchText}
                 onChange={(event) => setSearchText(event.target.value)}
-                placeholder="Search people..."
+                placeholder="Search chats..."
                 className="h-full min-w-0 flex-1 bg-transparent text-[13px] font-medium outline-none placeholder:text-[#999]"
               />
             </div>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
-            <div className="mb-2 mt-1 flex items-center justify-between px-2">
-              <p className="text-[13px] font-black uppercase tracking-[0.12em] text-[#777]">
-                Software People
-              </p>
-              <span className="text-[13px] font-black text-[#777]">
-                {peopleLoading ? "..." : filteredPeople.length}
-              </span>
-            </div>
-
-            {peopleLoading ? (
+            {isLoadingList ? (
               <div className="rounded-xl bg-white px-3 py-4 text-center text-[12px] font-bold text-[#777]">
-                Loading people...
-              </div>
-            ) : filteredPeople.length === 0 ? (
-              <div className="rounded-xl bg-white px-3 py-4 text-center text-[12px] font-bold text-[#777]">
-                No people found.
+                Loading chats...
               </div>
             ) : (
-              filteredPeople.map((person) => (
-                <SidebarRow
-                  key={person.id || person.key}
-                  initials={person.initials}
-                  color={person.color}
-                  title={person.name}
-                  subtitle={person.subtitle}
-                  active={activePerson?.id === person.id}
-                  onClick={() => setActivePerson(person)}
+              <>
+                <SectionHeader title="General" count={filteredGeneralRooms.length} />
+
+                {filteredGeneralRooms.length ? (
+                  filteredGeneralRooms.map((room) => (
+                    <SidebarRow
+  key={room.id}
+  initials={room.initials}
+  color={room.color}
+  icon={<Hash size={17} />}
+  title={room.name}
+  subtitle={room.subtitle}
+  badge={room.unreadCount}
+  active={getItemKey(activeItem) === getItemKey(room)}
+  onClick={() => setActiveItem(room)}
+/>
+                  ))
+                ) : (
+                  <div className="rounded-xl bg-white px-3 py-4 text-center text-[12px] font-bold text-[#777]">
+                    No general chat found.
+                  </div>
+                )}
+
+                <SectionHeader
+                  title="Project Chats"
+                  count={filteredProjectRooms.length}
                 />
-              ))
+
+                {filteredProjectRooms.length ? (
+                  filteredProjectRooms.map((room) => (
+                    <SidebarRow
+  key={room.id}
+  initials={room.initials}
+  color={room.color}
+  icon={<MessageCircle size={16} />}
+  title={room.name}
+  subtitle={room.subtitle}
+  badge={room.unreadCount}
+  active={getItemKey(activeItem) === getItemKey(room)}
+  onClick={() => setActiveItem(room)}
+/>
+                  ))
+                ) : (
+                  <div className="rounded-xl bg-white px-3 py-4 text-center text-[12px] font-bold text-[#777]">
+                    No project chats found.
+                  </div>
+                )}
+
+                <SectionHeader title="People" count={filteredPeople.length} />
+
+                {filteredPeople.length ? (
+                  filteredPeople.map((person) => (
+                    <SidebarRow
+  key={person.id || person.key}
+  initials={person.initials}
+  color={person.color}
+  icon={null}
+  title={person.name}
+  subtitle={person.subtitle}
+  badge={person.unreadCount}
+  active={getItemKey(activeItem) === getItemKey(person)}
+  onClick={() => setActiveItem(person)}
+/>
+                  ))
+                ) : (
+                  <div className="rounded-xl bg-white px-3 py-4 text-center text-[12px] font-bold text-[#777]">
+                    No people found.
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -560,10 +830,19 @@ export default function ChatPage({ mode = "employee" }) {
         <section className="flex min-h-0 flex-col bg-white">
           <header className="flex h-[66px] shrink-0 items-center border-b border-[#e8e8e8] px-6">
             <div className="flex items-center gap-4">
-              {activePerson ? (
+              {activeItem ? (
                 <Avatar
-                  initials={activePerson.initials}
-                  color={activePerson.color}
+                  initials={activeItem.initials}
+                  color={activeItem.color}
+                  icon={
+                    isRoomItem(activeItem) ? (
+                      activeItem.type === "general" ? (
+                        <Hash size={18} />
+                      ) : (
+                        <MessageCircle size={17} />
+                      )
+                    ) : null
+                  }
                   size="h-10 w-10"
                 />
               ) : (
@@ -584,10 +863,10 @@ export default function ChatPage({ mode = "employee" }) {
           </header>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-            {!activePerson ? (
+            {!activeItem ? (
               <div className="flex h-full items-center justify-center">
                 <p className="text-sm font-semibold text-[#999]">
-                  Select a person to start chatting.
+                  Select a chat to start messaging.
                 </p>
               </div>
             ) : messagesLoading ? (
@@ -600,19 +879,24 @@ export default function ChatPage({ mode = "employee" }) {
             ) : messages.length > 0 ? (
               <>
                 {messages.map((message) => (
-                  <MessageBubble
-                    key={message.id}
-                    message={message}
-                    currentUser={currentUser}
-                  />
+                 <MessageBubble
+  key={message.id}
+  message={message}
+  currentUser={currentUser}
+  onEdit={handleEditExistingMessage}
+  onDelete={handleDeleteExistingMessage}
+/>
                 ))}
                 <div ref={messagesEndRef} />
               </>
             ) : (
               <div className="flex h-full items-center justify-center">
-                <p className="text-sm font-semibold text-[#999]">
-                  No messages yet. Start the conversation.
-                </p>
+                <div className="text-center">
+                  <Users size={32} className="mx-auto mb-3 text-[#FF6B35]" />
+                  <p className="text-sm font-semibold text-[#999]">
+                    No messages yet. Start the conversation.
+                  </p>
+                </div>
                 <div ref={messagesEndRef} />
               </div>
             )}
@@ -664,7 +948,7 @@ export default function ChatPage({ mode = "employee" }) {
 
               <button
                 type="button"
-                disabled={sending || !activePerson}
+                disabled={sending || !activeItem}
                 onClick={() => fileInputRef.current?.click()}
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-[#777] transition hover:text-[#FF6B35] disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -673,13 +957,13 @@ export default function ChatPage({ mode = "employee" }) {
 
               <textarea
                 value={messageText}
-                disabled={sending || !activePerson}
+                disabled={sending || !activeItem}
                 onChange={(event) => setMessageText(event.target.value)}
                 onKeyDown={handleTextareaKeyDown}
                 placeholder={
-                  activePerson
-                    ? `Message ${activePerson.name}...`
-                    : "Select a person first..."
+                  activeItem
+                    ? `Message ${activeItem.name}...`
+                    : "Select a chat first..."
                 }
                 rows={1}
                 className="max-h-[120px] min-h-10 flex-1 resize-none bg-transparent px-1 py-2 text-[14px] font-medium text-black outline-none placeholder:text-[#999] disabled:cursor-not-allowed"
@@ -688,7 +972,7 @@ export default function ChatPage({ mode = "employee" }) {
               <button
                 type="submit"
                 disabled={
-                  sending || !activePerson || (!messageText.trim() && !attachment)
+                  sending || !activeItem || (!messageText.trim() && !attachment)
                 }
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FF6B35] text-white shadow-[0_8px_20px_rgba(255,107,53,0.28)] transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >

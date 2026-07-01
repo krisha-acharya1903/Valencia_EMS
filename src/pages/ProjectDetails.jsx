@@ -3,9 +3,12 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock3,
-  Columns3,
+  Download,
+  Eye,
+  Link as LinkIcon,
   ListChecks,
   Plus,
+  Send,
   Trash2,
   UsersRound,
   X,
@@ -17,6 +20,7 @@ import { useAuth } from "../context/AuthContext";
 import { apiDelete, apiGet, apiPatch, apiPost } from "../services/api";
 import * as projectService from "../services/projectService";
 import * as userService from "../services/userService";
+import { downloadEmployeeSubtaskAttachment } from "../services/employeeProjectBoardService";
 
 function normalize(value) {
   return String(value || "")
@@ -151,6 +155,34 @@ function formatDate(value) {
   });
 }
 
+function formatDateTime(value) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return String(value);
+
+  return date.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function toDateInputValue(value) {
+  if (!value) return "";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value).slice(0, 10);
+  }
+
+  return date.toISOString().slice(0, 10);
+}
+
 function getTimeline(project) {
   const start = formatDate(getStartDate(project));
   const end = formatDate(getEndDate(project));
@@ -189,9 +221,7 @@ function getTaskDescription(task) {
   return task?.description || task?.details || task?.summary || "";
 }
 
-function getTaskPriority(task) {
-  return task?.priority || task?.taskPriority || "Normal";
-}
+
 
 function getTaskStartDate(task) {
   return (
@@ -235,16 +265,81 @@ function getTaskStatus(task) {
   );
 }
 
+function isDoneStatus(value) {
+  const status = normalize(value);
+
+  return (
+    status === "completed" ||
+    status === "complete" ||
+    status === "done" ||
+    status === "finished"
+  );
+}
+
+function isUnderReviewStatus(value) {
+  const status = normalize(value);
+
+  return (
+    status === "under review" ||
+    status === "underreview" ||
+    status === "review" ||
+    status === "pending review"
+  );
+}
+
+function isInProgressStatus(value) {
+  const status = normalize(value);
+
+  return (
+    status === "in progress" ||
+    status === "inprogress" ||
+    status === "doing"
+  );
+}
+
+function isTaskAdminApproved(task) {
+  const status = getTaskStatus(task);
+
+  const reviewStatus = normalize(
+    task?.reviewStatus ||
+      task?.review_status ||
+      task?.approvalStatus ||
+      task?.approval_status ||
+      ""
+  );
+
+  const reviewedAt =
+    task?.reviewedAt ||
+    task?.reviewed_at ||
+    task?.approvedAt ||
+    task?.approved_at ||
+    "";
+
+  const reviewedBy =
+    task?.reviewedBy ||
+    task?.reviewed_by ||
+    task?.approvedBy ||
+    task?.approved_by ||
+    "";
+
+  const explicitlyApproved =
+    task?.approved === true ||
+    task?.adminApproved === true ||
+    task?.admin_approved === true ||
+    reviewStatus === "approved";
+
+  return (
+    isDoneStatus(status) &&
+    (explicitlyApproved || Boolean(reviewedAt) || Boolean(reviewedBy))
+  );
+}
+
 function normalizeTaskStatusForApi(status) {
   const clean = normalize(status);
 
-  if (clean === "completed" || clean === "complete" || clean === "done") {
-    return "Completed";
-  }
-
-  if (clean === "in progress" || clean === "inprogress" || clean === "doing") {
-    return "In Progress";
-  }
+  if (isDoneStatus(clean)) return "Completed";
+  if (isUnderReviewStatus(clean)) return "Under Review";
+  if (isInProgressStatus(clean)) return "In Progress";
 
   return "Pending";
 }
@@ -252,67 +347,15 @@ function normalizeTaskStatusForApi(status) {
 function getPrettyTaskStatus(task) {
   const status = getTaskStatus(task);
 
-  if (status === "completed" || status === "complete" || status === "done") {
-    return "Completed";
+  if (isTaskAdminApproved(task)) return "Done";
+
+  if (isUnderReviewStatus(status) || isDoneStatus(status)) {
+    return "Under Review";
   }
 
-  if (status === "in progress" || status === "inprogress" || status === "doing") {
-    return "In Progress";
-  }
+  if (isInProgressStatus(status)) return "In Progress";
 
-  return "Pending";
-}
-
-function isTaskComplete(task) {
-  const status = getTaskStatus(task);
-
-  return (
-    task?.done === true ||
-    task?.completed === true ||
-    status === "done" ||
-    status === "complete" ||
-    status === "completed"
-  );
-}
-
-function isTaskInProgress(task) {
-  const status = getTaskStatus(task);
-  return status === "in progress" || status === "inprogress" || status === "doing";
-}
-
-function getTaskAssignedRaw(task) {
-  return (
-    task?.assignedUser ||
-    task?.assigned_user ||
-    task?.assignedTo ||
-    task?.assigned_to ||
-    task?.assignee ||
-    task?.assigneeName ||
-    task?.assignee_name ||
-    task?.assignedToName ||
-    task?.assigned_to_name ||
-    task?.employee ||
-    task?.employeeName ||
-    task?.employee_name ||
-    task?.user ||
-    ""
-  );
-}
-
-function getTaskAssignedId(task) {
-  return normalizeId(
-    task?.assignedToId ||
-      task?.assigned_to_id ||
-      task?.assigneeId ||
-      task?.assignee_id ||
-      task?.employeeId ||
-      task?.employee_id ||
-      task?.userId ||
-      task?.user_id ||
-      task?.assigned_to ||
-      task?.assignedTo ||
-      getTaskAssignedRaw(task)
-  );
+  return "To Do";
 }
 
 function getTaskSubtasks(task) {
@@ -325,6 +368,143 @@ function getTaskSubtasks(task) {
     [];
 
   return Array.isArray(subtasks) ? subtasks : [];
+}
+
+function isSubtaskDone(subtask) {
+  return (
+    subtask?.completed === true ||
+    subtask?.done === true ||
+    isDoneStatus(subtask?.status)
+  );
+}
+
+function getSubtaskTitle(subtask, index = 0) {
+  return (
+    subtask?.title ||
+    subtask?.name ||
+    subtask?.taskName ||
+    subtask?.task_name ||
+    `Subtask ${index + 1}`
+  );
+}
+
+function getSubtaskDescription(subtask) {
+  return (
+    subtask?.submissionDescription ||
+    subtask?.submission_description ||
+    subtask?.description ||
+    subtask?.details ||
+    ""
+  );
+}
+
+function getSubtaskLink(subtask) {
+  return (
+    subtask?.submissionLink ||
+    subtask?.submission_link ||
+    subtask?.link ||
+    subtask?.url ||
+    ""
+  );
+}
+
+function getSubtaskAttachmentName(subtask) {
+  return (
+    subtask?.attachmentOriginalName ||
+    subtask?.attachment_original_name ||
+    subtask?.attachmentFilename ||
+    subtask?.attachment_filename ||
+    ""
+  );
+}
+
+function getSubtaskId(subtask) {
+  return String(
+    subtask?.id ||
+      subtask?.subtaskId ||
+      subtask?.subtask_id ||
+      subtask?.uid ||
+      ""
+  );
+}
+
+function subtaskHasAttachment(subtask) {
+  return Boolean(
+    subtask?.hasAttachment ||
+      subtask?.has_attachment ||
+      subtask?.attachmentPath ||
+      subtask?.attachment_path ||
+      subtask?.attachmentFilename ||
+      subtask?.attachment_filename ||
+      subtask?.attachmentOriginalName ||
+      subtask?.attachment_original_name
+  );
+}
+
+function getSubtaskSubmittedAt(subtask) {
+  return (
+    subtask?.submittedAt ||
+    subtask?.submitted_at ||
+    subtask?.submissionAt ||
+    subtask?.submission_at ||
+    subtask?.updatedAt ||
+    subtask?.updated_at ||
+    ""
+  );
+}
+
+function hasSubtaskSubmission(subtask) {
+  return Boolean(
+    getSubtaskDescription(subtask) ||
+      getSubtaskLink(subtask) ||
+      getSubtaskAttachmentName(subtask) ||
+      subtaskHasAttachment(subtask) ||
+      getSubtaskSubmittedAt(subtask)
+  );
+}
+
+function getTaskSubtaskProgress(task) {
+  const subtasks = getTaskSubtasks(task);
+
+  if (!subtasks.length) {
+    return {
+      total: 0,
+      completed: 0,
+      percent: isTaskAdminApproved(task) ? 100 : 0,
+    };
+  }
+
+  const completed = subtasks.filter(isSubtaskDone).length;
+
+  return {
+    total: subtasks.length,
+    completed,
+    percent: Math.round((completed / subtasks.length) * 100),
+  };
+}
+
+function getTaskStage(task) {
+  const status = getTaskStatus(task);
+  const subtasks = getTaskSubtasks(task);
+  const progress = getTaskSubtaskProgress(task);
+
+  if (isTaskAdminApproved(task)) return "done";
+
+  if (isUnderReviewStatus(status)) return "review";
+
+  if (isDoneStatus(status)) return "review";
+
+  if (subtasks.length > 0 && progress.completed === subtasks.length) {
+    return "review";
+  }
+
+  if (isInProgressStatus(status)) return "progress";
+
+  if (subtasks.length > 0 && progress.completed > 0) {
+    return "progress";
+  }
+
+  return "todo";
 }
 
 function getProjectTasks(project) {
@@ -345,7 +525,7 @@ function getProjectProgress(project) {
 
   if (!tasks.length) return Number(project?.progress || 0) || 0;
 
-  const completed = tasks.filter(isTaskComplete).length;
+  const completed = tasks.filter((task) => getTaskStage(task) === "done").length;
 
   return Math.round((completed / tasks.length) * 100);
 }
@@ -354,8 +534,13 @@ function getProjectComputedStatus(project) {
   const tasks = getProjectTasks(project);
 
   if (!tasks.length) return "Pending";
-  if (tasks.every(isTaskComplete)) return "Completed";
-  if (tasks.some(isTaskInProgress)) return "In Progress";
+  if (tasks.every((task) => getTaskStage(task) === "done")) return "Completed";
+  if (tasks.some((task) => getTaskStage(task) === "review")) {
+    return "Under Review";
+  }
+  if (tasks.some((task) => getTaskStage(task) === "progress")) {
+    return "In Progress";
+  }
 
   return "Pending";
 }
@@ -514,12 +699,17 @@ function getProjectMemberSources(project) {
   });
 }
 
-function getProjectAssignedEmployees(project, users) {
+function getProjectAssignedEmployees(project, users, tasks = []) {
   const memberSources = getProjectMemberSources(project);
+  const taskAssignedSources = tasks
+    .map((task) => getTaskAssignedId(task))
+    .filter(Boolean);
 
-  if (!memberSources.length) return [];
+  const combinedSources = [...memberSources, ...taskAssignedSources];
 
-  const memberKeys = memberSources
+  if (!combinedSources.length) return [];
+
+  const memberKeys = combinedSources
     .flatMap((member) => {
       if (typeof member === "object" && member) {
         return getUserKeys(member);
@@ -547,6 +737,41 @@ function getProjectAssignedEmployees(project, users) {
   });
 }
 
+function getTaskAssignedRaw(task) {
+  return (
+    task?.assignedUser ||
+    task?.assigned_user ||
+    task?.assignedTo ||
+    task?.assigned_to ||
+    task?.assignee ||
+    task?.assigneeName ||
+    task?.assignee_name ||
+    task?.assignedToName ||
+    task?.assigned_to_name ||
+    task?.employee ||
+    task?.employeeName ||
+    task?.employee_name ||
+    task?.user ||
+    ""
+  );
+}
+
+function getTaskAssignedId(task) {
+  return normalizeId(
+    task?.assignedToId ||
+      task?.assigned_to_id ||
+      task?.assigneeId ||
+      task?.assignee_id ||
+      task?.employeeId ||
+      task?.employee_id ||
+      task?.userId ||
+      task?.user_id ||
+      task?.assigned_to ||
+      task?.assignedTo ||
+      getTaskAssignedRaw(task)
+  );
+}
+
 function getAssignedEmployeeForTask(task, users) {
   const taskAssignedId = getTaskAssignedId(task).toLowerCase();
   const raw = getTaskAssignedRaw(task);
@@ -555,7 +780,10 @@ function getAssignedEmployeeForTask(task, users) {
 
   const matched = users.find((user) => {
     const keys = getUserKeys(user);
-    return keys.includes(taskAssignedId) || keys.includes(normalizeId(raw).toLowerCase());
+    return (
+      keys.includes(taskAssignedId) ||
+      keys.includes(normalizeId(raw).toLowerCase())
+    );
   });
 
   if (matched) return matched;
@@ -639,13 +867,26 @@ async function fetchProject(projectId, profile) {
   const projects = extractArray(response);
 
   return (
-    projects.find((project, index) => getProjectId(project, index) === String(projectId)) ||
+    projects.find(
+      (project, index) => getProjectId(project, index) === String(projectId)
+    ) ||
     projects[Number(projectId) - 1] ||
     null
   );
 }
 
 async function fetchProjectTasks(projectId) {
+  try {
+    const boardResponse = await apiGet(`/employee/projects/${projectId}/board`);
+    const boardTasks = extractArray(boardResponse);
+
+    if (boardTasks.length) {
+      return boardTasks;
+    }
+  } catch (error) {
+    console.warn("Could not fetch employee board for admin:", error?.message);
+  }
+
   const taskSources = [];
 
   try {
@@ -656,10 +897,12 @@ async function fetchProjectTasks(projectId) {
   }
 
   try {
-    const projectTaskResponse = await apiGet(`/employee-project-tasks/${projectId}`);
+    const projectTaskResponse = await apiGet(
+      `/employee-project-tasks/${projectId}`
+    );
     taskSources.push(...extractArray(projectTaskResponse));
   } catch {
-    // Optional route. Ignore.
+    // optional route
   }
 
   const unique = [];
@@ -688,23 +931,27 @@ async function fetchProjectTasks(projectId) {
   return unique;
 }
 
-function Modal({ title, children, onClose }) {
+function Modal({ title, children, onClose, maxWidth = "max-w-[720px]" }) {
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-[720px] overflow-hidden rounded-2xl bg-white shadow-[0_24px_70px_rgba(0,0,0,0.24)]">
-        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/45 px-4 py-8">
+      <div
+        className={`w-full ${maxWidth} max-h-[92vh] overflow-hidden rounded-3xl bg-white shadow-[0_24px_70px_rgba(0,0,0,0.24)]`}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-5">
           <h2 className="text-xl font-black text-[#061638]">{title}</h2>
 
           <button
             type="button"
             onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-[#061638] transition hover:bg-red-50 hover:text-red-500"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-500 transition hover:bg-red-100"
           >
             <X size={18} />
           </button>
         </div>
 
-        <div className="p-5">{children}</div>
+        <div className="max-h-[calc(92vh-82px)] overflow-y-auto p-6">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -717,10 +964,10 @@ export default function ProjectDetails() {
   const [project, setProject] = useState(null);
   const [users, setUsers] = useState([]);
   const [selectedMemberId, setSelectedMemberId] = useState("all");
-  const [showProgress, setShowProgress] = useState(false);
+  const [viewMode, setViewMode] = useState("kanban");
 
   const [taskModalOpen, setTaskModalOpen] = useState(false);
-  const [subtaskModalOpen, setSubtaskModalOpen] = useState(false);
+  const [reviewTask, setReviewTask] = useState(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -767,22 +1014,23 @@ export default function ProjectDetails() {
     loadData();
   }, [loadData]);
 
+  const allTasks = useMemo(() => {
+    return getProjectTasks(project);
+  }, [project]);
+
   const assignedEmployees = useMemo(() => {
-    return getProjectAssignedEmployees(project, users);
-  }, [project, users]);
+    return getProjectAssignedEmployees(project, users, allTasks);
+  }, [project, users, allTasks]);
 
   const selectedMember = useMemo(() => {
     if (selectedMemberId === "all") return null;
 
     return (
-      assignedEmployees.find((employee) => getUserId(employee) === selectedMemberId) ||
-      null
+      assignedEmployees.find(
+        (employee) => getUserId(employee) === selectedMemberId
+      ) || null
     );
   }, [assignedEmployees, selectedMemberId]);
-
-  const allTasks = useMemo(() => {
-    return getProjectTasks(project);
-  }, [project]);
 
   const visibleTasks = useMemo(() => {
     if (!selectedMember) return allTasks;
@@ -798,184 +1046,119 @@ export default function ProjectDetails() {
   }, [project, visibleTasks]);
 
   const taskStats = useMemo(() => {
-    const completed = visibleTasks.filter(isTaskComplete).length;
-    const inProgress = visibleTasks.filter(isTaskInProgress).length;
-    const pending = Math.max(0, visibleTasks.length - completed - inProgress);
+    const todo = visibleTasks.filter((task) => getTaskStage(task) === "todo")
+      .length;
+    const inProgress = visibleTasks.filter(
+      (task) => getTaskStage(task) === "progress"
+    ).length;
+    const underReview = visibleTasks.filter(
+      (task) => getTaskStage(task) === "review"
+    ).length;
+    const done = visibleTasks.filter((task) => getTaskStage(task) === "done")
+      .length;
 
     return {
       total: visibleTasks.length,
-      completed,
+      todo,
       inProgress,
-      pending,
+      underReview,
+      done,
     };
   }, [visibleTasks]);
 
-  async function handleTaskStatusChange(taskIndex, nextStatus) {
-    const task = allTasks[taskIndex];
-
-    if (!task) return;
-
-    const taskId = getTaskId(task, taskIndex);
-
-    if (!task?.id && !task?.taskId && !task?.task_id) {
-      toast.error("This task is not saved in database yet.");
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      await apiPatch(`/tasks/${taskId}/status`, {
-        status: normalizeTaskStatusForApi(nextStatus),
-      });
-
-      toast.success("Task status updated.");
-      await loadData();
-    } catch (error) {
-      console.error("Task status update error:", error);
-      toast.error(error?.message || "Failed to update task status.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function addTask(payload) {
-    if (!project) return;
+  if (!project) return;
 
-    const realProjectId = getProjectId(project, Number(projectId) - 1);
+  const realProjectId = getProjectId(project, Number(projectId) - 1);
 
-    const selectedUser = users.find((user) => {
-      const userId = String(getUserId(user));
-      const userEmail = String(getUserEmail(user)).toLowerCase();
-      const userName = String(getUserName(user)).toLowerCase();
+  const projectStartDate = toDateInputValue(getStartDate(project));
+  const projectEndDate = toDateInputValue(getEndDate(project));
 
-      const payloadId = String(
-        payload.assignedToId ||
-          payload.assigned_to ||
-          payload.assignedTo ||
-          payload.employeeId ||
-          ""
-      );
+  const taskStartDate = toDateInputValue(
+    payload.startDate || payload.start_date || ""
+  );
 
-      const payloadEmail = String(
-        payload.assignedUser?.email ||
-          payload.assignedTo?.email ||
-          ""
-      ).toLowerCase();
+  const taskEndDate = toDateInputValue(
+    payload.endDate || payload.end_date || payload.dueDate || ""
+  );
 
-      const payloadName = String(
-        payload.assignedUser?.name ||
-          payload.assignedTo?.name ||
-          payload.assignedTo ||
-          ""
-      ).toLowerCase();
-
-      return (
-        userId === payloadId ||
-        userEmail === payloadEmail ||
-        userName === payloadName
-      );
-    });
-
-    const assignedTo = selectedUser ? getUserId(selectedUser) : "";
-
-    if (!assignedTo) {
-      toast.error("Assigned employee ID missing. Select employee again.");
-      return;
-    }
-
-    setSaving(true);
-
-    const taskPayload = {
-      project_id: realProjectId,
-      projectId: realProjectId,
-
-      title: payload.title || payload.name,
-      name: payload.title || payload.name,
-
-      description: payload.description || "",
-
-      assigned_to: assignedTo,
-      assignedTo: assignedTo,
-      assignedToId: assignedTo,
-
-      status: normalizeTaskStatusForApi(payload.status || "Pending"),
-      priority: payload.priority || "Normal",
-
-      start_date: payload.startDate || payload.start_date || "",
-      startDate: payload.startDate || payload.start_date || "",
-
-      end_date: payload.endDate || payload.end_date || payload.dueDate || "",
-      endDate: payload.endDate || payload.end_date || payload.dueDate || "",
-      dueDate: payload.dueDate || payload.endDate || payload.end_date || "",
-
-      department: getProjectDepartment(project),
-    };
-
-    try {
-      await apiPost("/tasks", taskPayload);
-
-      toast.success("Task assigned and saved.");
-      setTaskModalOpen(false);
-
-      try {
-        await loadData();
-      } catch (reloadError) {
-        console.warn("Task created, but reload failed:", reloadError);
-      }
-    } catch (error) {
-      console.warn("Create task request returned error:", error);
-
-      try {
-        await loadData();
-
-        toast.success("Task assigned and saved.");
-        setTaskModalOpen(false);
-      } catch (reloadError) {
-        console.error("Add task error:", error);
-        console.error("Reload after failed create also failed:", reloadError);
-
-        toast.error(error?.message || "Failed to save task.");
-      }
-    } finally {
-      setSaving(false);
-    }
+  if (!projectStartDate || !projectEndDate) {
+    toast.error("Project start date and end date are required before adding tasks.");
+    return;
   }
 
-  async function addSubtask(payload) {
-    const parentTask = allTasks[Number(payload.parentTaskIndex)];
-
-    if (!parentTask) {
-      toast.error("Select a valid parent task.");
-      return;
-    }
-
-    const taskId = getTaskId(parentTask, Number(payload.parentTaskIndex));
-
-    if (!parentTask?.id && !parentTask?.taskId && !parentTask?.task_id) {
-      toast.error("Parent task is not saved in database yet.");
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      await apiPost("/subtasks", {
-        task_id: taskId,
-        title: payload.title,
-        status: "Pending",
-      });
-
-      toast.success("Subtask added.");
-      setSubtaskModalOpen(false);
-      await loadData();
-    } catch (error) {
-      console.error("Add subtask error:", error);
-      toast.error(error?.message || "Failed to save subtask.");
-    } finally {
-      setSaving(false);
-    }
+  if (!taskStartDate || !taskEndDate) {
+    toast.error("Task start date and end date are required.");
+    return;
   }
+
+  if (taskStartDate < projectStartDate) {
+    toast.error("Task start date cannot be before project start date.");
+    return;
+  }
+
+  if (taskEndDate > projectEndDate) {
+    toast.error("Task end date cannot be after project deadline.");
+    return;
+  }
+
+  if (taskEndDate < taskStartDate) {
+    toast.error("Task end date cannot be before task start date.");
+    return;
+  }
+
+  const selectedUser = users.find((user) => {
+    const userId = String(getUserId(user));
+    return userId === String(payload.assignedToId);
+  });
+
+  const assignedTo = selectedUser ? getUserId(selectedUser) : "";
+
+  if (!assignedTo) {
+    toast.error("Assigned employee ID missing. Select employee again.");
+    return;
+  }
+
+  setSaving(true);
+
+  const taskPayload = {
+    project_id: realProjectId,
+    projectId: realProjectId,
+
+    title: payload.title || payload.name,
+    name: payload.title || payload.name,
+
+    description: payload.description || "",
+
+    assigned_to: assignedTo,
+    assignedTo: assignedTo,
+    assignedToId: assignedTo,
+
+    status: normalizeTaskStatusForApi(payload.status || "Pending"),
+
+    start_date: taskStartDate,
+    startDate: taskStartDate,
+
+    end_date: taskEndDate,
+    endDate: taskEndDate,
+    dueDate: taskEndDate,
+
+    department: getProjectDepartment(project),
+  };
+
+  try {
+    await apiPost("/tasks", taskPayload);
+
+    toast.success("Task assigned successfully.");
+    setTaskModalOpen(false);
+    await loadData();
+  } catch (error) {
+    console.error("Add task error:", error);
+    toast.error(error?.message || "Failed to save task.");
+  } finally {
+    setSaving(false);
+  }
+}
 
   async function deleteTask(task, index) {
     const taskId = getTaskId(task, index);
@@ -998,6 +1181,64 @@ export default function ProjectDetails() {
     } catch (error) {
       console.error("Delete task error:", error);
       toast.error(error?.message || "Failed to delete task.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function approveTask(task) {
+    const taskId = getTaskId(task);
+
+    if (!taskId) {
+      toast.error("Task ID missing.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await apiPatch(`/employee/tasks/${taskId}/review`, {
+        approved: true,
+      });
+
+      toast.success("Task approved and moved to Done.");
+      setReviewTask(null);
+      await loadData();
+    } catch (error) {
+      console.error("Approve task error:", error);
+      toast.error(error?.message || "Failed to approve task.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function sendBackTask(task, remark) {
+    const taskId = getTaskId(task);
+
+    if (!taskId) {
+      toast.error("Task ID missing.");
+      return;
+    }
+
+    if (!remark.trim()) {
+      toast.error("Add a remark before sending back.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await apiPatch(`/employee/tasks/${taskId}/review`, {
+        approved: false,
+        remark: remark.trim(),
+      });
+
+      toast.success("Remark added. Task sent back to In Progress.");
+      setReviewTask(null);
+      await loadData();
+    } catch (error) {
+      console.error("Send back task error:", error);
+      toast.error(error?.message || "Failed to send task back.");
     } finally {
       setSaving(false);
     }
@@ -1030,7 +1271,7 @@ export default function ProjectDetails() {
   return (
     <main className="page-shell">
       <div className="mobile-frame space-y-5">
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <h1 className="text-3xl font-black leading-tight text-[#061638]">
@@ -1061,13 +1302,13 @@ export default function ProjectDetails() {
                 Project Progress
               </p>
               <p className="mt-2 text-4xl font-black text-[#061638]">
-                {getProjectProgress(project)}%
+                {progressPercent}%
               </p>
             </div>
           </div>
         </section>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
           <div className="flex items-start gap-3">
             <UsersRound size={30} className="mt-1 text-[#061638]" />
 
@@ -1077,7 +1318,8 @@ export default function ProjectDetails() {
               </h2>
 
               <p className="mt-1 text-sm font-semibold text-slate-500">
-                View all users assigned to this project.
+                Select all users for overall Kanban or choose one employee for
+                per-user Kanban.
               </p>
             </div>
           </div>
@@ -1141,19 +1383,22 @@ export default function ProjectDetails() {
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
           <div className="grid gap-4 border-b border-slate-100 p-6 xl:grid-cols-[1fr_auto] xl:items-start">
             <div>
               <h2 className="text-2xl font-black text-[#061638]">
-                Project Tasks
+                {selectedMember
+                  ? `${getUserName(selectedMember)} Kanban`
+                  : "Overall Project Kanban"}
               </h2>
 
-              <p className="mt-2 max-w-[380px] text-sm font-semibold leading-6 text-slate-500">
-                View tasks, update status, and track subtasks for this project.
+              <p className="mt-2 max-w-[440px] text-sm font-semibold leading-6 text-slate-500">
+                Track task progress in To Do, In Progress, Under Review, and
+                Done. Under Review tasks are waiting for admin approval.
               </p>
             </div>
 
-            <div className="flex min-w-max items-center justify-end gap-3 overflow-x-auto">
+            <div className="flex min-w-max flex-wrap items-center justify-end gap-3">
               <button
                 type="button"
                 onClick={() => setTaskModalOpen(true)}
@@ -1163,62 +1408,59 @@ export default function ProjectDetails() {
                 Add Task
               </button>
 
-              <button
-                type="button"
-                onClick={() => setSubtaskModalOpen(true)}
-                className="flex h-11 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 text-sm font-black text-[#061638] transition hover:border-[#FF6B35] hover:text-[#FF6B35]"
-              >
-                <Plus size={18} />
-                Add Sub Task
-              </button>
-
               <div className="flex h-11 shrink-0 items-center rounded-xl border border-orange-200 bg-orange-50 px-5 text-sm font-black text-[#FF6B35]">
                 Status: {getProjectComputedStatus({ ...project, tasks: visibleTasks })}
               </div>
 
               <button
                 type="button"
-                onClick={() => setShowProgress((current) => !current)}
+                onClick={() =>
+                  setViewMode((current) =>
+                    current === "kanban" ? "progress" : "kanban"
+                  )
+                }
                 className="flex h-11 shrink-0 items-center gap-2 rounded-xl bg-[#FF6B35] px-6 text-sm font-black text-white shadow-[0_10px_24px_rgba(255,107,53,0.25)] transition hover:opacity-90"
               >
                 <BarChart3 size={18} />
-                {showProgress ? "Hide Progress" : "Show Progress"}
+                {viewMode === "kanban" ? "Show Progress" : "Show Kanban"}
               </button>
             </div>
           </div>
 
-          {showProgress ? (
-            <ProgressSection
+          {viewMode === "progress" ? (
+            <ProgressPanel
               tasks={visibleTasks}
-              users={users}
               progress={progressPercent}
               stats={taskStats}
             />
-          ) : null}
-
-          <TaskTable
-            tasks={visibleTasks}
-            allTasks={allTasks}
-            users={users}
-            onStatusChange={handleTaskStatusChange}
-            onDelete={deleteTask}
-          />
+          ) : (
+            <AdminKanbanBoard
+              tasks={visibleTasks}
+              users={users}
+              onOpenReview={setReviewTask}
+              onDelete={deleteTask}
+            />
+          )}
         </section>
       </div>
 
       {taskModalOpen ? (
         <TaskModal
-          users={users}
-          onClose={() => setTaskModalOpen(false)}
-          onSave={addTask}
-        />
+  users={users}
+  project={project}
+  onClose={() => setTaskModalOpen(false)}
+  onSave={addTask}
+/>
       ) : null}
 
-      {subtaskModalOpen ? (
-        <SubtaskModal
-          tasks={allTasks}
-          onClose={() => setSubtaskModalOpen(false)}
-          onSave={addSubtask}
+      {reviewTask ? (
+        <ReviewTaskModal
+          task={reviewTask}
+          users={users}
+          saving={saving}
+          onClose={() => setReviewTask(null)}
+          onApprove={approveTask}
+          onSendBack={sendBackTask}
         />
       ) : null}
 
@@ -1231,188 +1473,312 @@ export default function ProjectDetails() {
   );
 }
 
-function TaskTable({ tasks, allTasks, users, onStatusChange, onDelete }) {
-  if (!tasks.length) {
-    return (
-      <div>
-        <div className="grid grid-cols-[1.2fr_1fr_0.9fr_0.8fr_1fr_1fr_0.8fr] bg-slate-50 px-5 py-4 text-xs font-black uppercase tracking-[0.14em] text-slate-500">
-          <span>Task</span>
-          <span>Assigned To</span>
-          <span>Status</span>
-          <span>Priority</span>
-          <span>Timeline</span>
-          <span>Subtasks</span>
-          <span>Actions</span>
-        </div>
-
-        <div className="px-5 py-12 text-center text-sm font-semibold text-slate-500">
-          No tasks found for this selection.
-        </div>
-      </div>
-    );
-  }
+function AdminKanbanBoard({ tasks, users, onOpenReview, onDelete }) {
+  const columns = [
+    {
+      key: "todo",
+      title: "To Do",
+      dot: "bg-slate-400",
+      items: tasks.filter((task) => getTaskStage(task) === "todo"),
+    },
+    {
+      key: "progress",
+      title: "In Progress",
+      dot: "bg-blue-500",
+      items: tasks.filter((task) => getTaskStage(task) === "progress"),
+    },
+    {
+      key: "review",
+      title: "Under Review",
+      dot: "bg-amber-500",
+      items: tasks.filter((task) => getTaskStage(task) === "review"),
+    },
+    {
+      key: "done",
+      title: "Done",
+      dot: "bg-emerald-500",
+      items: tasks.filter((task) => getTaskStage(task) === "done"),
+    },
+  ];
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[1050px] text-left text-sm">
-        <thead>
-          <tr className="border-y border-slate-100 bg-slate-50 text-xs uppercase tracking-[0.14em] text-slate-500">
-            <th className="px-5 py-4">Task</th>
-            <th className="px-5 py-4">Assigned To</th>
-            <th className="px-5 py-4">Status</th>
-            <th className="px-5 py-4">Priority</th>
-            <th className="px-5 py-4">Timeline</th>
-            <th className="px-5 py-4">Subtasks</th>
-            <th className="px-5 py-4">Actions</th>
-          </tr>
-        </thead>
+    <div className="bg-[#fbfbfb] p-4">
+  <div className="grid w-full grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {columns.map((column) => (
+          <div
+            key={column.key}
+            className="min-h-[420px] rounded-2xl border border-slate-200 bg-white p-3"
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="flex items-center gap-2 text-lg font-black text-[#061638]">
+                <span className={`h-3 w-3 rounded-full ${column.dot}`} />
+                {column.title}
+              </h3>
 
-        <tbody>
-          {tasks.map((task, visibleIndex) => {
-            const actualIndex = allTasks.findIndex(
-              (item) => getTaskId(item) === getTaskId(task)
-            );
-            const assigned = getAssignedEmployeeForTask(task, users);
-            const subtasks = getTaskSubtasks(task);
+              <span className="flex h-8 min-w-8 items-center justify-center rounded-full bg-slate-50 px-2 text-sm font-black text-slate-500">
+                {column.items.length}
+              </span>
+            </div>
 
-            return (
-              <tr
-                key={getTaskId(task, visibleIndex)}
-                className="border-b border-slate-100 bg-white"
-              >
-                <td className="px-5 py-5 align-top">
-                  <p className="font-black text-[#061638]">
-                    {getTaskName(task, visibleIndex)}
+            <div className="space-y-4">
+              {column.items.length ? (
+                column.items.map((task, index) => (
+                  <TaskCard
+                    key={getTaskId(task, index)}
+                    task={task}
+                    index={index}
+                    users={users}
+                    stage={column.key}
+                    onOpenReview={onOpenReview}
+                    onDelete={onDelete}
+                  />
+                ))
+              ) : (
+                <div className="flex min-h-[170px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 text-center">
+                  <p className="text-sm font-semibold text-slate-400">
+                    No {column.title.toLowerCase()} tasks
                   </p>
-
-                  {getTaskDescription(task) ? (
-                    <p className="mt-1 text-sm font-semibold text-slate-500">
-                      {getTaskDescription(task)}
-                    </p>
-                  ) : null}
-                </td>
-
-                <td className="px-5 py-5 align-top font-black text-[#061638]">
-                  {assigned ? getUserName(assigned) : "Unassigned"}
-                </td>
-
-                <td className="px-5 py-5 align-top">
-                  <select
-                    value={getTaskStatus(task)}
-                    onChange={(event) =>
-                      onStatusChange(actualIndex, event.target.value)
-                    }
-                    className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-black text-[#061638] outline-none focus:border-[#FF6B35]"
-                  >
-                    <option value="pending">Pending</option>
-                    <option value="in progress">In Progress</option>
-                    <option value="completed">Completed</option>
-                  </select>
-                </td>
-
-                <td className="px-5 py-5 align-top font-black text-[#061638]">
-                  {getTaskPriority(task)}
-                </td>
-
-                <td className="px-5 py-5 align-top font-semibold leading-6 text-slate-600">
-                  {getTaskTimeline(task)}
-                </td>
-
-                <td className="px-5 py-5 align-top">
-                  {subtasks.length ? (
-                    <div className="space-y-2">
-                      {subtasks.map((subtask, index) => (
-                        <div
-                          key={subtask?.id || index}
-                          className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
-                        >
-                          <p className="font-black text-[#061638]">
-                            {subtask?.title ||
-                              subtask?.name ||
-                              subtask?.taskName ||
-                              `Subtask ${index + 1}`}
-                          </p>
-                          <p className="mt-1 text-xs font-semibold text-slate-500">
-                            {subtask?.status || "Pending"}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="text-sm font-semibold text-slate-400">
-                      No subtasks
-                    </span>
-                  )}
-                </td>
-
-                <td className="px-5 py-5 align-top">
-                  <button
-                    type="button"
-                    onClick={() => onDelete(task, actualIndex)}
-                    className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-[#061638] transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-                  >
-                    <Trash2 size={16} />
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ProgressSection({ tasks, users, progress, stats }) {
-  return (
-    <div className="border-b border-slate-100 bg-white p-6">
-      <div className="grid gap-4 xl:grid-cols-[1fr_1.2fr]">
-        <StatusProgressBar progress={progress} stats={stats} />
-        <GanttChart tasks={tasks} users={users} />
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
-
-      <KanbanBoard tasks={tasks} users={users} />
     </div>
   );
 }
 
-function StatusProgressBar({ progress, stats }) {
+function TaskCard({ task, index, users, stage, onOpenReview, onDelete }) {
+  const assigned = getAssignedEmployeeForTask(task, users);
+  const progress = getTaskSubtaskProgress(task);
+  const subtasks = getTaskSubtasks(task);
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-      <div className="mb-4 flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-100 text-[#FF6B35]">
-          <BarChart3 size={20} />
+    <div
+      className={`rounded-2xl border bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)] ${
+        stage === "review"
+          ? "border-amber-200"
+          : stage === "done"
+          ? "border-emerald-200"
+          : "border-slate-200"
+      }`}
+    >
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          
+
+          <h4 className="mt-3 text-base font-black leading-5 text-[#061638]">
+            {getTaskName(task, index)}
+          </h4>
         </div>
 
-        <div>
-          <h3 className="text-lg font-black text-[#061638]">Status Bar</h3>
-          <p className="text-sm font-semibold text-slate-500">
-            Overall task completion status.
+        <div className="shrink-0 rounded-2xl bg-orange-50 px-3 py-2 text-right">
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-400">
+            Deadline
+          </p>
+          <p className="mt-1 text-xs font-black text-[#FF6B35]">
+            {formatDate(getTaskEndDate(task))}
           </p>
         </div>
       </div>
 
-      <div className="mb-3 flex items-end justify-between">
-        <span className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">
-          Progress
+      {getTaskDescription(task) ? (
+        <p className="mb-4 text-sm font-semibold leading-6 text-slate-500">
+          {getTaskDescription(task)}
+        </p>
+      ) : null}
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-blue-50 px-3 py-1 text-[11px] font-black text-blue-600">
+          {getPrettyTaskStatus(task)}
         </span>
 
-        <span className="text-3xl font-black text-[#061638]">{progress}%</span>
+        <span className="rounded-full bg-slate-50 px-3 py-1 text-[11px] font-black text-slate-500">
+          {assigned ? getUserName(assigned) : "Unassigned"}
+        </span>
       </div>
 
-      <div className="h-4 overflow-hidden rounded-full bg-slate-200">
-        <div
-          className="h-full rounded-full bg-[#FF6B35] transition-all"
-          style={{ width: `${progress}%` }}
-        />
+      <div className="mb-4">
+        <div className="mb-2 flex items-center justify-between text-xs font-black text-slate-500">
+          <span>{progress.percent}% completed</span>
+          <span>
+            {progress.completed}/{progress.total} subtasks
+          </span>
+        </div>
+
+        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+          <div
+            className="h-full rounded-full bg-[#FF6B35] transition-all"
+            style={{ width: `${progress.percent}%` }}
+          />
+        </div>
       </div>
 
-      <div className="mt-5 grid grid-cols-4 gap-3">
-        <MiniStat label="Total" value={stats.total} />
-        <MiniStat label="Done" value={stats.completed} />
-        <MiniStat label="Progress" value={stats.inProgress} />
-        <MiniStat label="Pending" value={stats.pending} />
+      <div className="mb-4 rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-black text-[#061638]">Subtasks</p>
+          <span className="rounded-full bg-white px-2 py-1 text-xs font-black text-slate-500">
+            {subtasks.length}
+          </span>
+        </div>
+
+        {subtasks.length ? (
+          <div className="mt-3 space-y-2">
+            {subtasks.slice(0, 3).map((subtask, subtaskIndex) => (
+              <div
+                key={subtask?.id || subtaskIndex}
+                className="flex items-start gap-2 text-xs font-semibold text-slate-500"
+              >
+                <span
+                  className={`mt-0.5 h-4 w-4 shrink-0 rounded border ${
+                    isSubtaskDone(subtask)
+                      ? "border-emerald-500 bg-emerald-500"
+                      : "border-slate-300 bg-white"
+                  }`}
+                />
+                <span className="line-clamp-2">
+                  {getSubtaskTitle(subtask, subtaskIndex)}
+                </span>
+              </div>
+            ))}
+
+            {subtasks.length > 3 ? (
+              <p className="text-xs font-black text-[#FF6B35]">
+                +{subtasks.length - 3} more subtasks
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-2 text-xs font-semibold text-slate-400">
+            No subtasks added yet.
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between gap-2">
+        {stage === "review" ? (
+          <button
+            type="button"
+            onClick={() => onOpenReview(task)}
+            className="flex h-10 flex-1 items-center justify-center gap-2 rounded-xl bg-[#FF6B35] px-4 text-sm font-black text-white transition hover:opacity-90"
+          >
+            <Eye size={16} />
+            Review
+          </button>
+        ) : (
+          <div className="text-xs font-semibold text-slate-400">
+            {getTaskTimeline(task)}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => onDelete(task, index)}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-500 transition hover:bg-red-100"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProgressPanel({ tasks, progress, stats }) {
+  return (
+    <div className="border-b border-slate-100 bg-white p-6">
+      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-100 text-[#FF6B35]">
+              <BarChart3 size={20} />
+            </div>
+
+            <div>
+              <h3 className="text-lg font-black text-[#061638]">
+                Progress Summary
+              </h3>
+              <p className="text-sm font-semibold text-slate-500">
+                Done tasks are counted as completed.
+              </p>
+            </div>
+          </div>
+
+          <div className="mb-3 flex items-end justify-between">
+            <span className="text-sm font-black uppercase tracking-[0.14em] text-slate-500">
+              Progress
+            </span>
+
+            <span className="text-3xl font-black text-[#061638]">
+              {progress}%
+            </span>
+          </div>
+
+          <div className="h-4 overflow-hidden rounded-full bg-slate-200">
+            <div
+              className="h-full rounded-full bg-[#FF6B35] transition-all"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+
+          <div className="mt-5 grid grid-cols-5 gap-3">
+            <MiniStat label="Total" value={stats.total} />
+            <MiniStat label="To Do" value={stats.todo} />
+            <MiniStat label="Progress" value={stats.inProgress} />
+            <MiniStat label="Review" value={stats.underReview} />
+            <MiniStat label="Done" value={stats.done} />
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-100 text-blue-600">
+              <CalendarDays size={20} />
+            </div>
+
+            <div>
+              <h3 className="text-lg font-black text-[#061638]">
+                Task Timelines
+              </h3>
+              <p className="text-sm font-semibold text-slate-500">
+                Deadline-wise task overview.
+              </p>
+            </div>
+          </div>
+
+          {tasks.length ? (
+            <div className="space-y-3">
+              {tasks.map((task, index) => {
+                const progressData = getTaskSubtaskProgress(task);
+
+                return (
+                  <div key={getTaskId(task, index)}>
+                    <div className="mb-1 flex items-center justify-between gap-3 text-xs font-black text-slate-500">
+                      <span className="truncate">
+                        {getTaskName(task, index)}
+                      </span>
+                      <span>{formatDate(getTaskEndDate(task))}</span>
+                    </div>
+
+                    <div className="h-8 overflow-hidden rounded-xl bg-white">
+                      <div
+                        className="flex h-full items-center rounded-xl bg-[#FF6B35] px-3 text-xs font-black text-white"
+                        style={{
+                          width: `${Math.max(progressData.percent, 12)}%`,
+                        }}
+                      >
+                        {progressData.percent}%
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
+              No tasks available.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1429,171 +1795,40 @@ function MiniStat({ label, value }) {
   );
 }
 
-function GanttChart({ tasks, users }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-      <div className="mb-4 flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-100 text-blue-600">
-          <CalendarDays size={20} />
-        </div>
+function TaskModal({ users, project, onClose, onSave }) {
+  const projectStartDate = toDateInputValue(getStartDate(project));
+  const projectEndDate = toDateInputValue(getEndDate(project));
 
-        <div>
-          <h3 className="text-lg font-black text-[#061638]">Gantt Chart</h3>
-          <p className="text-sm font-semibold text-slate-500">
-            Timeline view of project tasks.
-          </p>
-        </div>
-      </div>
-
-      {tasks.length ? (
-        <div className="space-y-3">
-          {tasks.map((task, index) => {
-            const assigned = getAssignedEmployeeForTask(task, users);
-            const width = isTaskComplete(task) ? 100 : isTaskInProgress(task) ? 60 : 28;
-
-            return (
-              <div key={getTaskId(task, index)}>
-                <div className="mb-1 flex items-center justify-between gap-3 text-xs font-black text-slate-500">
-                  <span className="truncate">
-                    {getTaskName(task, index)}
-                    {assigned ? ` • ${getUserName(assigned)}` : ""}
-                  </span>
-                  <span>{getTaskTimeline(task)}</span>
-                </div>
-
-                <div className="h-8 overflow-hidden rounded-xl bg-white">
-                  <div
-                    className="flex h-full items-center rounded-xl bg-[#FF6B35] px-3 text-xs font-black text-white"
-                    style={{ width: `${width}%` }}
-                  >
-                    {getPrettyTaskStatus(task)}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm font-semibold text-slate-500">
-          No tasks available for Gantt chart.
-        </div>
-      )}
-    </div>
-  );
-}
-
-function KanbanBoard({ tasks, users }) {
-  const columns = [
-    {
-      key: "pending",
-      title: "Pending",
-      icon: Clock3,
-      items: tasks.filter((task) => !isTaskComplete(task) && !isTaskInProgress(task)),
-    },
-    {
-      key: "in-progress",
-      title: "In Progress",
-      icon: ListChecks,
-      items: tasks.filter(isTaskInProgress),
-    },
-    {
-      key: "completed",
-      title: "Completed",
-      icon: CheckCircle2,
-      items: tasks.filter(isTaskComplete),
-    },
-  ];
-
-  return (
-    <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-5">
-      <div className="mb-4 flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-green-100 text-green-600">
-          <Columns3 size={20} />
-        </div>
-
-        <div>
-          <h3 className="text-lg font-black text-[#061638]">Kanban</h3>
-          <p className="text-sm font-semibold text-slate-500">
-            Task board based on current status.
-          </p>
-        </div>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-3">
-        {columns.map((column) => {
-          const Icon = column.icon;
-
-          return (
-            <div
-              key={column.key}
-              className="min-h-[210px] rounded-2xl border border-slate-200 bg-white p-4"
-            >
-              <div className="mb-4 flex items-center justify-between">
-                <h4 className="flex items-center gap-2 text-sm font-black uppercase tracking-[0.12em] text-[#061638]">
-                  <Icon size={16} />
-                  {column.title}
-                </h4>
-
-                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-500">
-                  {column.items.length}
-                </span>
-              </div>
-
-              <div className="space-y-3">
-                {column.items.length ? (
-                  column.items.map((task, index) => {
-                    const assigned = getAssignedEmployeeForTask(task, users);
-
-                    return (
-                      <div
-                        key={getTaskId(task, index)}
-                        className="rounded-xl border border-slate-200 bg-slate-50 p-3"
-                      >
-                        <p className="font-black text-[#061638]">
-                          {getTaskName(task, index)}
-                        </p>
-
-                        <p className="mt-2 text-xs font-semibold text-slate-500">
-                          {assigned ? getUserName(assigned) : "Unassigned"}
-                        </p>
-
-                        <div className="mt-3 flex items-center justify-between text-xs font-black text-slate-500">
-                          <span>{getTaskPriority(task)}</span>
-                          <span>{formatDate(getTaskEndDate(task))}</span>
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm font-semibold text-slate-400">
-                    No tasks
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function TaskModal({ users, onClose, onSave }) {
   const [form, setForm] = useState({
     title: "",
     description: "",
     assignedToId: "",
     status: "Pending",
-    priority: "High",
     startDate: "",
     endDate: "",
   });
 
-  function updateField(name, value) {
+  useEffect(() => {
     setForm((current) => ({
       ...current,
-      [name]: value,
+      startDate: current.startDate || projectStartDate || "",
+      endDate: current.endDate || projectEndDate || "",
     }));
+  }, [projectStartDate, projectEndDate]);
+
+  function updateField(name, value) {
+    setForm((current) => {
+      const next = {
+        ...current,
+        [name]: value,
+      };
+
+      if (name === "startDate" && next.endDate && next.endDate < value) {
+        next.endDate = value;
+      }
+
+      return next;
+    });
   }
 
   function submit(event) {
@@ -1606,6 +1841,31 @@ function TaskModal({ users, onClose, onSave }) {
 
     if (!form.assignedToId) {
       toast.error("Select employee before assigning task.");
+      return;
+    }
+
+    if (!projectStartDate || !projectEndDate) {
+      toast.error("Project start date and end date are required before adding tasks.");
+      return;
+    }
+
+    if (!form.startDate || !form.endDate) {
+      toast.error("Task start date and end date are required.");
+      return;
+    }
+
+    if (form.startDate < projectStartDate) {
+      toast.error("Task start date cannot be before project start date.");
+      return;
+    }
+
+    if (form.endDate > projectEndDate) {
+      toast.error("Task end date cannot be after project deadline.");
+      return;
+    }
+
+    if (form.endDate < form.startDate) {
+      toast.error("Task end date cannot be before task start date.");
       return;
     }
 
@@ -1632,7 +1892,6 @@ function TaskModal({ users, onClose, onSave }) {
         : null,
 
       status: form.status,
-      priority: form.priority,
       startDate: form.startDate,
       endDate: form.endDate,
       dueDate: form.endDate,
@@ -1642,6 +1901,12 @@ function TaskModal({ users, onClose, onSave }) {
   return (
     <Modal title="Add Task" onClose={onClose}>
       <form onSubmit={submit} className="grid gap-4">
+        <div className="rounded-2xl border border-orange-100 bg-orange-50 px-4 py-3 text-sm font-semibold text-[#FF6B35]">
+          Project timeline:{" "}
+          <b>{projectStartDate || "No start date"}</b> to{" "}
+          <b>{projectEndDate || "No end date"}</b>
+        </div>
+
         <label>
           <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
             Task Name
@@ -1677,13 +1942,15 @@ function TaskModal({ users, onClose, onSave }) {
 
             <select
               value={form.assignedToId}
-              onChange={(event) => updateField("assignedToId", event.target.value)}
+              onChange={(event) =>
+                updateField("assignedToId", event.target.value)
+              }
               className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
             >
               <option value="">Select employee</option>
               {users.map((user, index) => (
                 <option key={getUserId(user) || index} value={getUserId(user)}>
-                  {getUserName(user)}
+                  {getUserName(user)} — {getUserDepartment(user)}
                 </option>
               ))}
             </select>
@@ -1699,26 +1966,24 @@ function TaskModal({ users, onClose, onSave }) {
               onChange={(event) => updateField("status", event.target.value)}
               className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
             >
-              <option value="Pending">Pending</option>
+              <option value="Pending">To Do</option>
               <option value="In Progress">In Progress</option>
-              <option value="Completed">Completed</option>
             </select>
           </label>
 
           <label>
             <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-              Priority
+              Start Date
             </span>
 
-            <select
-              value={form.priority}
-              onChange={(event) => updateField("priority", event.target.value)}
+            <input
+              type="date"
+              value={form.startDate}
+              min={projectStartDate || undefined}
+              max={projectEndDate || undefined}
+              onChange={(event) => updateField("startDate", event.target.value)}
               className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
-            >
-              <option value="Low">Low</option>
-              <option value="Medium">Medium</option>
-              <option value="High">High</option>
-            </select>
+            />
           </label>
 
           <label>
@@ -1729,6 +1994,8 @@ function TaskModal({ users, onClose, onSave }) {
             <input
               type="date"
               value={form.endDate}
+              min={form.startDate || projectStartDate || undefined}
+              max={projectEndDate || undefined}
               onChange={(event) => updateField("endDate", event.target.value)}
               className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
             />
@@ -1756,93 +2023,220 @@ function TaskModal({ users, onClose, onSave }) {
   );
 }
 
-function SubtaskModal({ tasks, onClose, onSave }) {
-  const [form, setForm] = useState({
-    parentTaskIndex: "",
-    title: "",
-  });
+function ReviewTaskModal({
+  task,
+  users,
+  saving,
+  onClose,
+  onApprove,
+  onSendBack,
+}) {
+  const [remark, setRemark] = useState("");
+  const assigned = getAssignedEmployeeForTask(task, users);
+  const subtasks = getTaskSubtasks(task);
+    async function handleDownloadSubtaskAttachment(subtask) {
+    const subtaskId = getSubtaskId(subtask);
 
-  function submit(event) {
-    event.preventDefault();
-
-    if (form.parentTaskIndex === "") {
-      toast.error("Select a parent task.");
+    if (!subtaskId) {
+      toast.error("Subtask ID missing. Cannot download attachment.");
       return;
     }
 
-    if (!form.title.trim()) {
-      toast.error("Subtask name is required.");
-      return;
+    try {
+      await downloadEmployeeSubtaskAttachment(
+        subtaskId,
+        getSubtaskAttachmentName(subtask) || "subtask-attachment"
+      );
+    } catch (error) {
+      console.error("Admin download subtask attachment error:", error);
+      toast.error(error?.message || "Failed to download attachment.");
     }
-
-    onSave({
-      parentTaskIndex: form.parentTaskIndex,
-      title: form.title.trim(),
-    });
   }
 
   return (
-    <Modal title="Add Sub Task" onClose={onClose}>
-      <form onSubmit={submit} className="grid gap-4">
-        <label>
-          <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-            Parent Task
-          </span>
+    <Modal title="Review Task" onClose={onClose} maxWidth="max-w-[880px]">
+      <div className="grid gap-5">
+        <div className="rounded-2xl border border-orange-100 bg-orange-50 p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h3 className="text-2xl font-black text-[#061638]">
+                {getTaskName(task)}
+              </h3>
 
-          <select
-            value={form.parentTaskIndex}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                parentTaskIndex: event.target.value,
-              }))
-            }
-            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
-          >
-            <option value="">Select task</option>
-            {tasks.map((task, index) => (
-              <option key={getTaskId(task, index)} value={String(index)}>
-                {getTaskName(task, index)}
-              </option>
-            ))}
-          </select>
-        </label>
+              {getTaskDescription(task) ? (
+                <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+                  {getTaskDescription(task)}
+                </p>
+              ) : null}
 
-        <label>
-          <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-            Subtask Name
-          </span>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-[#FF6B35]">
+                  {getPrettyTaskStatus(task)}
+                </span>
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-600">
+                  {assigned ? getUserName(assigned) : "Unassigned"}
+                </span>
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-600">
+                  Deadline: {formatDate(getTaskEndDate(task))}
+                </span>
+              </div>
+            </div>
 
-          <input
-            value={form.title}
-            onChange={(event) =>
-              setForm((current) => ({
-                ...current,
-                title: event.target.value,
-              }))
-            }
-            placeholder="Subtask name"
-            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
-          />
-        </label>
-
-        <div className="flex justify-end gap-3 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-11 rounded-xl border border-slate-200 bg-white px-5 text-sm font-black text-[#061638]"
-          >
-            Cancel
-          </button>
-
-          <button
-            type="submit"
-            className="h-11 rounded-xl bg-[#FF6B35] px-6 text-sm font-black text-white"
-          >
-            Add Subtask
-          </button>
+            <div className="rounded-2xl bg-white px-4 py-3 text-center">
+              <p className="text-xs font-black uppercase tracking-[0.12em] text-slate-400">
+                Subtasks
+              </p>
+              <p className="mt-1 text-3xl font-black text-[#061638]">
+                {getTaskSubtaskProgress(task).completed}/
+                {getTaskSubtaskProgress(task).total}
+              </p>
+            </div>
+          </div>
         </div>
-      </form>
+
+        <div>
+          <h4 className="mb-3 text-lg font-black text-[#061638]">
+            Submitted Subtasks
+          </h4>
+
+          {subtasks.length ? (
+            <div className="space-y-3">
+              {subtasks.map((subtask, index) => (
+  <div
+    key={subtask?.id || index}
+    className={`rounded-2xl border p-4 ${
+      hasSubtaskSubmission(subtask)
+        ? "border-orange-100 bg-[#fffaf7]"
+        : "border-slate-200 bg-white"
+    }`}
+  >
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <p className="font-black text-[#061638]">
+          {getSubtaskTitle(subtask, index)}
+        </p>
+
+        <div className="mt-2 flex flex-wrap gap-2">
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-black ${
+              isSubtaskDone(subtask)
+                ? "bg-emerald-50 text-emerald-600"
+                : "bg-slate-50 text-slate-500"
+            }`}
+          >
+            {isSubtaskDone(subtask) ? "Completed" : "Not Completed"}
+          </span>
+
+          {hasSubtaskSubmission(subtask) ? (
+            <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-black text-[#FF6B35]">
+              Work Submitted
+            </span>
+          ) : (
+            <span className="rounded-full bg-slate-50 px-3 py-1 text-xs font-black text-slate-400">
+              No Submission
+            </span>
+          )}
+
+          {getSubtaskSubmittedAt(subtask) ? (
+            <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black text-blue-600">
+              {formatDateTime(getSubtaskSubmittedAt(subtask))}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    </div>
+
+    {getSubtaskDescription(subtask) ? (
+      <div className="mt-4 rounded-xl bg-white px-4 py-3">
+        <p className="text-xs font-black uppercase tracking-[0.12em] text-slate-400">
+          Submitted Description
+        </p>
+        <p className="mt-1 whitespace-pre-wrap text-sm font-semibold leading-6 text-slate-600">
+          {getSubtaskDescription(subtask)}
+        </p>
+      </div>
+    ) : null}
+
+    {getSubtaskLink(subtask) ? (
+      <a
+        href={getSubtaskLink(subtask)}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-3 flex items-center gap-2 rounded-xl bg-blue-50 px-4 py-3 text-sm font-black text-blue-600 transition hover:bg-blue-100"
+      >
+        <LinkIcon size={16} />
+        <span className="break-all">{getSubtaskLink(subtask)}</span>
+      </a>
+    ) : null}
+
+    {subtaskHasAttachment(subtask) ? (
+      <button
+        type="button"
+        onClick={() => handleDownloadSubtaskAttachment(subtask)}
+        className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-orange-100 bg-orange-50 px-4 text-sm font-black text-[#FF6B35] transition hover:bg-orange-100"
+      >
+        <Download size={16} />
+        Download Attachment
+        {getSubtaskAttachmentName(subtask)
+          ? `: ${getSubtaskAttachmentName(subtask)}`
+          : ""}
+      </button>
+    ) : null}
+
+    {!hasSubtaskSubmission(subtask) ? (
+      <p className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-400">
+        Employee has not submitted description, link, or attachment for this
+        subtask yet.
+      </p>
+    ) : null}
+  </div>
+))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm font-semibold text-slate-500">
+              No subtasks found for this task.
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <label>
+            <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
+              Add Remark
+            </span>
+
+            <textarea
+              value={remark}
+              onChange={(event) => setRemark(event.target.value)}
+              rows={4}
+              placeholder="Write what still needs to be completed..."
+              className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
+            />
+          </label>
+
+          <div className="mt-4 flex flex-col justify-end gap-3 sm:flex-row">
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => onSendBack(task, remark)}
+              className="flex h-11 items-center justify-center gap-2 rounded-xl border border-orange-200 bg-white px-5 text-sm font-black text-[#FF6B35] transition hover:bg-orange-50 disabled:opacity-50"
+            >
+              <Send size={16} />
+              Add Remark & Send Back
+            </button>
+
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => onApprove(task)}
+              className="flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-6 text-sm font-black text-white transition hover:bg-emerald-700 disabled:opacity-50"
+            >
+              <CheckCircle2 size={16} />
+              Approve & Move to Done
+            </button>
+          </div>
+        </div>
+      </div>
     </Modal>
   );
 }

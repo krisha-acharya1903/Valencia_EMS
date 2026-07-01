@@ -45,7 +45,7 @@ function getAuthToken() {
         if (parsed?.auth?.token) return parsed.auth.token;
         if (parsed?.data?.token) return parsed.data.token;
       } catch {
-        // ignore
+        // ignore invalid JSON
       }
     }
   }
@@ -119,7 +119,7 @@ function getInitials(name) {
 function formatTime(value) {
   if (!value) return "";
 
-  const date = new Date(value);
+  const date = new Date(String(value).replace(" ", "T"));
 
   if (Number.isNaN(date.getTime())) {
     return String(value).slice(11, 16);
@@ -183,13 +183,63 @@ export function normalizeChatUser(user = {}, index = 0) {
     ...user,
     id,
     key: id || email || name,
+    type: "person",
+    chatType: "person",
     name,
+    title: name,
     email,
     role,
     department,
     subtitle: [role, department].filter(Boolean).join(" • ") || email,
+
+    unreadCount: Number(user.unreadCount || user.unread_count || 0),
+    unread_count: Number(user.unreadCount || user.unread_count || 0),
+
     initials: getInitials(name),
     color: user.color || getAvatarColor(index),
+  };
+}
+
+export function normalizeChatRoom(room = {}, index = 0) {
+  const id = String(
+    room.id ||
+      room.roomId ||
+      room.room_id ||
+      (room.type === "general" ? "general" : "")
+  );
+
+  const type = room.type || room.roomType || room.room_type || "general";
+
+  const name =
+    room.name ||
+    room.title ||
+    (type === "project" ? "Project Chat" : "General Chat");
+
+  const subtitle =
+    room.subtitle ||
+    room.description ||
+    room.department ||
+    (type === "project" ? "Project discussion" : "Company-wide discussion");
+
+  return {
+    ...room,
+    id,
+    roomId: id,
+    room_id: id,
+    type,
+    roomType: type,
+    room_type: type,
+    chatType: "room",
+    name,
+    title: name,
+    subtitle,
+    projectId: room.projectId || room.project_id || "",
+
+    unreadCount: Number(room.unreadCount || room.unread_count || 0),
+    unread_count: Number(room.unreadCount || room.unread_count || 0),
+
+    initials: type === "general" ? "GC" : "PC",
+    color: type === "general" ? "bg-[#FF6B35]" : getAvatarColor(index + 1),
   };
 }
 
@@ -211,6 +261,8 @@ export function normalizeChatMessage(message = {}) {
       message.to_user_id ||
       ""
   );
+
+  const roomId = String(message.roomId || message.room_id || "");
 
   const text =
     message.text ||
@@ -236,6 +288,9 @@ export function normalizeChatMessage(message = {}) {
 
     id,
     messageId: id,
+
+    roomId,
+    room_id: roomId,
 
     senderId,
     sender_id: senderId,
@@ -269,13 +324,16 @@ export function normalizeChatMessage(message = {}) {
     time: message.time || formatTime(createdAt),
 
     hasAttachment: Boolean(
-      message.hasAttachment ||
-        message.has_attachment ||
-        message.attachmentUrl ||
-        message.attachment_url ||
-        message.attachmentFilename ||
-        message.attachment_filename
-    ),
+  message.hasAttachment === true ||
+    message.has_attachment === true ||
+    message.attachmentFilename ||
+    message.attachment_filename ||
+    message.attachmentOriginalName ||
+    message.attachment_original_name ||
+    message.attachmentMimeType ||
+    message.attachment_mime_type ||
+    Number(message.attachmentSize || message.attachment_size || 0) > 0
+),
 
     attachmentFilename:
       message.attachmentFilename || message.attachment_filename || "",
@@ -293,11 +351,25 @@ export function normalizeChatMessage(message = {}) {
     attachmentSize: Number(message.attachmentSize || message.attachment_size || 0),
 
     attachmentUrl:
-      message.attachmentUrl ||
+  message.hasAttachment === true ||
+  message.has_attachment === true ||
+  message.attachmentFilename ||
+  message.attachment_filename ||
+  message.attachmentOriginalName ||
+  message.attachment_original_name ||
+  Number(message.attachmentSize || message.attachment_size || 0) > 0
+    ? message.attachmentUrl ||
       message.attachment_url ||
-      (id ? `/api/chat/messages/${id}/attachment` : ""),
+      (roomId
+        ? `/api/chat/rooms/messages/${id}/attachment`
+        : id
+        ? `/api/chat/messages/${id}/attachment`
+        : "")
+    : "",
   };
 }
+
+/* ---------------- DIRECT PEOPLE CHAT ---------------- */
 
 export async function getChatUsers() {
   const response = await apiRequest("/chat/users", {
@@ -353,7 +425,107 @@ export async function sendChatMessage({ receiverId, text = "", attachment = null
   return normalizeChatMessage(response?.message || response?.data || response);
 }
 
-export async function downloadChatAttachment(messageId, filename = "chat-attachment") {
+/* ---------------- ROOM CHAT: GENERAL + PROJECTS ---------------- */
+
+export async function getChatRooms() {
+  const response = await apiRequest("/chat/rooms", {
+    method: "GET",
+  });
+
+  return extractArray(response, ["rooms"])
+    .map(normalizeChatRoom)
+    .filter((room) => room.id);
+}
+
+export async function getChatRoomMessages(roomId) {
+  if (!roomId) {
+    return [];
+  }
+
+  const response = await apiRequest(`/chat/rooms/${roomId}/messages`, {
+    method: "GET",
+  });
+
+  return extractArray(response, ["messages"])
+    .map(normalizeChatMessage)
+    .filter((message) => message.id);
+}
+
+export async function sendChatRoomMessage({
+  roomId,
+  text = "",
+  attachment = null,
+}) {
+  if (!roomId) {
+    throw new Error("Room is missing.");
+  }
+
+  const formData = new FormData();
+
+  formData.append("messageText", text || "");
+
+  if (attachment) {
+    formData.append("attachment", attachment);
+  }
+
+  const response = await apiRequest(`/chat/rooms/${roomId}/messages`, {
+    method: "POST",
+    body: formData,
+  });
+
+  return normalizeChatMessage(response?.message || response?.data || response);
+}
+
+/* ---------------- EDIT / DELETE CHAT MESSAGE ---------------- */
+
+export async function editChatMessage({
+  messageId,
+  text = "",
+  roomMessage = false,
+}) {
+  if (!messageId) {
+    throw new Error("Message ID is missing.");
+  }
+
+  const path = roomMessage
+    ? `/chat/rooms/messages/${messageId}`
+    : `/chat/messages/${messageId}`;
+
+  const response = await apiRequest(path, {
+    method: "PATCH",
+    body: JSON.stringify({
+      messageText: text,
+    }),
+  });
+
+  return normalizeChatMessage(response?.message || response?.data || response);
+}
+
+export async function deleteChatMessage(messageId, options = {}) {
+  if (!messageId) {
+    throw new Error("Message ID is missing.");
+  }
+
+  const isRoomMessage = Boolean(options.roomMessage || options.isRoomMessage);
+
+  const path = isRoomMessage
+    ? `/chat/rooms/messages/${messageId}`
+    : `/chat/messages/${messageId}`;
+
+  const response = await apiRequest(path, {
+    method: "DELETE",
+  });
+
+  return response;
+}
+
+/* ---------------- ATTACHMENT DOWNLOAD ---------------- */
+
+export async function downloadChatAttachment(
+  messageId,
+  filename = "chat-attachment",
+  options = {}
+) {
   if (!messageId) {
     throw new Error("Message ID is missing.");
   }
@@ -364,14 +536,17 @@ export async function downloadChatAttachment(messageId, filename = "chat-attachm
     throw new Error("Missing authorization token. Please logout and login again.");
   }
 
-  const response = await fetch(
-    `${API_BASE}/chat/messages/${messageId}/attachment`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  );
+  const isRoomMessage = Boolean(options.roomMessage || options.isRoomMessage);
+
+  const path = isRoomMessage
+    ? `/chat/rooms/messages/${messageId}/attachment`
+    : `/chat/messages/${messageId}/attachment`;
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
 
   if (!response.ok) {
     let message = "Failed to download attachment.";

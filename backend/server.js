@@ -44,7 +44,14 @@ app.use(
 );
 
 app.use(express.json());
+console.log("✅ SERVER.JS UPDATED - CHAT TEST ROUTE LOADED");
 
+app.get("/api/chat/rooms-test", (req, res) => {
+  res.json({
+    success: true,
+    message: "Chat rooms test route is working.",
+  });
+});
 
 app.use("/api/jay-more", jayMoreRoutes);
 app.use("/api/employee", employeeProjectBoardRoutes);
@@ -565,6 +572,71 @@ function requireAdmin(req, res, next) {
   }
 
   next();
+}
+
+function isJayMoreAccount(user) {
+  return (
+    String(user?.email || "").trim().toLowerCase() ===
+    "jay.more@valencianutrition.com"
+  );
+}
+
+function requireAdminOrJayMore(req, res, next) {
+  const role = String(req.user?.role || "").trim();
+
+  if (
+    ["superAdmin", "superadmin", "admin"].includes(role) ||
+    isJayMoreAccount(req.user)
+  ) {
+    next();
+    return;
+  }
+
+  return res.status(403).json({
+    success: false,
+    message: "Only Admin, Super Admin, or Jay More can perform this action.",
+  });
+}
+
+function isJayMoreAccount(user) {
+  return (
+    String(user?.email || "").trim().toLowerCase() ===
+    "jay.more@valencianutrition.com"
+  );
+}
+
+function requireAdminOrJayMore(req, res, next) {
+  if (
+    ["superAdmin", "admin"].includes(req.user.role) ||
+    isJayMoreAccount(req.user)
+  ) {
+    next();
+    return;
+  }
+
+  return res.status(403).json({
+    success: false,
+    message: "Only Admin, Super Admin, or Jay More can perform this action.",
+  });
+}
+
+function isJayMoreAccount(user) {
+  return (
+    String(user?.email || "").trim().toLowerCase() ===
+    "jay.more@valencianutrition.com"
+  );
+}
+
+function requireAdminOrJayMore(req, res, next) {
+  if (["superAdmin", "admin"].includes(req.user.role) || isJayMoreAccount(req.user)) {
+    next();
+    return;
+  }
+
+  return res.status(403).json({
+    success: false,
+    message: "Only Admin, Super Admin, or Jay More can perform this action.",
+  });
 }
 
 /* ---------------- STATUS / PROGRESS HELPERS ---------------- */
@@ -2713,7 +2785,7 @@ app.get("/api/departments", authRequired, (req, res) => {
   });
 });
 
-app.post("/api/departments", authRequired, requireAdmin, (req, res) => {
+app.post("/api/departments", authRequired, requireAdminOrJayMore, (req, res) => {
   try {
     const name = String(req.body.name || "").trim();
 
@@ -2757,7 +2829,7 @@ app.post("/api/departments", authRequired, requireAdmin, (req, res) => {
   }
 });
 
-app.patch("/api/departments/:id", authRequired, requireAdmin, (req, res) => {
+app.patch("/api/departments/:id", authRequired, requireAdminOrJayMore, (req, res) => {
   try {
     const id = req.params.id;
     const name = String(req.body.name || "").trim();
@@ -2811,7 +2883,7 @@ app.patch("/api/departments/:id", authRequired, requireAdmin, (req, res) => {
   }
 });
 
-app.delete("/api/departments/:id", authRequired, requireAdmin, (req, res) => {
+app.delete("/api/departments/:id", authRequired, requireAdminOrJayMore, (req, res) => {
   try {
     const id = req.params.id;
 
@@ -4455,6 +4527,99 @@ app.patch("/api/tasks/:id/status", authRequired, (req, res) => {
   }
 });
 
+ensureColumn("tasks", "reviewed_by", "INTEGER");
+ensureColumn("tasks", "reviewed_at", "TEXT");
+ensureColumn("tasks", "review_comment", "TEXT");
+
+app.patch("/api/employee/tasks/:taskId/review", authRequired, requireAdmin, (req, res) => {
+  try {
+    const taskId = req.params.taskId;
+    const approved = Boolean(req.body.approved);
+    const remark = String(
+      req.body.remark || req.body.reviewComment || req.body.review_comment || ""
+    ).trim();
+
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found.",
+      });
+    }
+
+    const nowIST = getIndianTimestamp();
+
+    const nextStatus = approved ? "Completed" : "In Progress";
+    const completedAt = approved ? nowIST : null;
+
+    db.prepare(
+      `
+      UPDATE tasks
+      SET status = ?,
+          completed_at = ?,
+          reviewed_by = ?,
+          reviewed_at = ?,
+          review_comment = ?,
+          updated_at = ?
+      WHERE id = ?
+    `
+    ).run(
+      nextStatus,
+      completedAt,
+      req.user.id,
+      nowIST,
+      remark,
+      nowIST,
+      taskId
+    );
+
+    const updated = getTaskWithSubtasks(taskId);
+
+    recordEmployeeActivity({
+      userId: updated.assigned_to,
+      role: "employee",
+      department: updated.department || "",
+      actionType: approved ? "task_approved" : "task_sent_back",
+      title: approved ? "Task approved" : "Task sent back",
+      message: approved
+        ? `${updated.title || "Task"} was approved and moved to Done.`
+        : `${updated.title || "Task"} was sent back for changes.${remark ? ` Remark: ${remark}` : ""}`,
+      entityType: "task",
+      entityId: updated.id,
+      createdBy: req.user.id,
+    });
+
+    createNotification({
+      title: approved ? "Task approved" : "Task sent back",
+      message: approved
+        ? `${updated.title || "Task"} was approved and moved to Done.`
+        : `${updated.title || "Task"} was sent back for changes.${remark ? ` Remark: ${remark}` : ""}`,
+      severity: approved ? "success" : "warning",
+      targetType: "User",
+      userId: updated.assigned_to,
+      department: updated.department || "",
+      entityType: "task",
+      entityId: updated.id,
+      createdBy: req.user.id,
+    });
+
+    recalculateProjectProgress(updated.project_id);
+
+    res.json({
+      success: true,
+      message: approved ? "Task approved." : "Task sent back.",
+      task: updated,
+    });
+  } catch (error) {
+    console.error("Review employee task error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to review task.",
+    });
+  }
+});
 app.delete("/api/tasks/:id", authRequired, (req, res) => {
   try {
     const id = req.params.id;
@@ -7568,23 +7733,41 @@ function insertChatNotification({ receiverId, senderName, messageText, messageId
 
 app.get("/api/chat/users", authRequired, (req, res) => {
   try {
+    function getDirectUnreadCount(senderId, receiverId) {
+      try {
+        const row = db
+          .prepare(
+            `
+            SELECT COUNT(*) AS count
+            FROM chat_messages
+            WHERE CAST(sender_id AS TEXT) = CAST(? AS TEXT)
+              AND CAST(receiver_id AS TEXT) = CAST(? AS TEXT)
+              AND COALESCE(is_read, 0) = 0
+          `
+          )
+          .get(senderId, receiverId);
+
+        return Number(row?.count || 0);
+      } catch {
+        return 0;
+      }
+    }
+
     const users = getAllUsersWithDepartmentForChat()
       .filter((user) => String(user.id) !== String(req.user.id))
       .filter(isSoftwareChatUser)
-      .map(normalizeChatUserForResponse)
-      .filter(Boolean);
+      .map((user) => {
+        const normalized = normalizeChatUserForResponse(user);
 
-    console.log("CHAT USERS RETURNED:", {
-      currentUser: req.user.email,
-      count: users.length,
-      users: users.map((user) => ({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        department: user.department,
-      })),
-    });
+        if (!normalized) return null;
+
+        return {
+          ...normalized,
+          unreadCount: getDirectUnreadCount(user.id, req.user.id),
+          unread_count: getDirectUnreadCount(user.id, req.user.id),
+        };
+      })
+      .filter(Boolean);
 
     res.json({
       success: true,
@@ -7887,6 +8070,12 @@ app.get("/api/chat/messages/:messageId/attachment", authRequired, (req, res) => 
   }
 });
 
+app.get("/api/chat/rooms-test", (req, res) => {
+  res.json({
+    success: true,
+    message: "Chat rooms route area is working.",
+  });
+});
 /* ---------------- CSV IMPORT - JAY MORE ONLY ---------------- */
 
 app.post("/api/admin/import-users-csv", authRequired, async (req, res) => {
@@ -8447,6 +8636,944 @@ app.delete(
   }
 );
 
+/* ---------------- CHAT ROOMS: GENERAL + PROJECT CHATS ---------------- */
+
+function ensureChatRoomMessagesTable() {
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS chat_room_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_id TEXT NOT NULL,
+      room_type TEXT NOT NULL DEFAULT 'general',
+      project_id INTEGER,
+      sender_id INTEGER NOT NULL,
+      message_text TEXT DEFAULT '',
+      attachment_filename TEXT DEFAULT '',
+      attachment_original_name TEXT DEFAULT '',
+      attachment_path TEXT DEFAULT '',
+      attachment_mime_type TEXT DEFAULT '',
+      attachment_size INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+  `
+  ).run();
+
+  db.prepare(
+    `
+    CREATE TABLE IF NOT EXISTS chat_room_reads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      room_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      last_read_at TEXT DEFAULT '',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(room_id, user_id)
+    )
+  `
+  ).run();
+
+}
+
+function normalizeChatRole(value) {
+  return String(value || "")
+    .replaceAll("_", "")
+    .replaceAll("-", "")
+    .replaceAll(" ", "")
+    .toLowerCase();
+}
+
+
+function getChatUserKeys(user) {
+  return [
+    user?.id,
+    user?.user_id,
+    user?.userId,
+    user?.employee_id,
+    user?.employeeId,
+    user?.email,
+    user?.name,
+    user?.full_name,
+    user?.fullName,
+  ]
+    .filter(Boolean)
+    .map((item) => normalizeChatText(item));
+}
+
+function getProjectNameForChat(project, index = 0) {
+  return (
+    project?.name ||
+    project?.title ||
+    project?.project_name ||
+    project?.projectName ||
+    `Project ${index + 1}`
+  );
+}
+
+function getProjectDepartmentForChat(project) {
+  return (
+    project?.department ||
+    project?.department_name ||
+    project?.departmentName ||
+    project?.division ||
+    project?.division_name ||
+    project?.divisionName ||
+    ""
+  );
+}
+
+function getProjectIdForChat(project) {
+  return String(project?.id || project?.project_id || project?.projectId || "");
+}
+
+function safeJsonArray(value) {
+  if (!value) return [];
+
+  if (Array.isArray(value)) return value;
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+
+    if (!trimmed) return [];
+
+    try {
+      const parsed = JSON.parse(trimmed);
+
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === "object") return [parsed];
+    } catch {
+      return trimmed
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+  }
+
+  if (typeof value === "object") return [value];
+
+  return [value];
+}
+
+function getProjectMemberKeysForChat(project) {
+  const fields = [
+    project?.members,
+    project?.member,
+    project?.assignedMembers,
+    project?.assigned_members,
+    project?.assignedUsers,
+    project?.assigned_users,
+    project?.assignedEmployees,
+    project?.assigned_employees,
+    project?.users,
+    project?.employees,
+    project?.team,
+    project?.teamMembers,
+    project?.team_members,
+    project?.assignedTo,
+    project?.assigned_to,
+    project?.assignee,
+    project?.assignees,
+    project?.employeeIds,
+    project?.employee_ids,
+  ];
+
+  return fields
+    .flatMap(safeJsonArray)
+    .flatMap((member) => {
+      if (member && typeof member === "object") {
+        return getChatUserKeys(member);
+      }
+
+      return [normalizeChatText(member)];
+    })
+    .filter(Boolean);
+}
+
+function getAllProjectsForChatRooms() {
+  try {
+    return db.prepare("SELECT * FROM projects ORDER BY id DESC").all();
+  } catch (error) {
+    console.warn("Chat rooms could not read projects table:", error?.message);
+    return [];
+  }
+}
+
+function userHasTaskInProjectForChat(user, projectId) {
+  try {
+    const row = db
+      .prepare(
+        `
+        SELECT id
+        FROM tasks
+        WHERE CAST(project_id AS TEXT) = CAST(? AS TEXT)
+          AND (
+            CAST(assigned_to AS TEXT) = CAST(? AS TEXT)
+            OR CAST(assignedTo AS TEXT) = CAST(? AS TEXT)
+            OR CAST(assigned_to_id AS TEXT) = CAST(? AS TEXT)
+            OR CAST(employee_id AS TEXT) = CAST(? AS TEXT)
+            OR CAST(user_id AS TEXT) = CAST(? AS TEXT)
+          )
+        LIMIT 1
+      `
+      )
+      .get(projectId, user.id, user.id, user.id, user.id, user.id);
+
+    return Boolean(row);
+  } catch {
+    try {
+      const row = db
+        .prepare(
+          `
+          SELECT id
+          FROM tasks
+          WHERE CAST(project_id AS TEXT) = CAST(? AS TEXT)
+            AND CAST(assigned_to AS TEXT) = CAST(? AS TEXT)
+          LIMIT 1
+        `
+        )
+        .get(projectId, user.id);
+
+      return Boolean(row);
+    } catch {
+      return false;
+    }
+  }
+}
+
+function userCanAccessProjectRoom(user, project) {
+  const role = normalizeChatRole(user?.role);
+  const projectId = getProjectIdForChat(project);
+
+  if (!projectId) return false;
+
+  if (role === "superadmin") return true;
+
+  const userDepartment = normalizeChatText(user?.department);
+  const projectDepartment = normalizeChatText(getProjectDepartmentForChat(project));
+
+  if (role === "admin" || role === "manager") {
+    const adminOwned =
+      normalizeChatText(project?.created_by) === normalizeChatText(user?.id) ||
+      normalizeChatText(project?.created_by_id) === normalizeChatText(user?.id) ||
+      normalizeChatText(project?.admin_id) === normalizeChatText(user?.id) ||
+      normalizeChatText(project?.assigned_by) === normalizeChatText(user?.id) ||
+      normalizeChatText(project?.manager_id) === normalizeChatText(user?.id);
+
+    const sameDepartment =
+      userDepartment && projectDepartment && userDepartment === projectDepartment;
+
+    return adminOwned || sameDepartment || userHasTaskInProjectForChat(user, projectId);
+  }
+
+  const userKeys = getChatUserKeys(user);
+  const memberKeys = getProjectMemberKeysForChat(project);
+
+  const isProjectMember = userKeys.some((key) => memberKeys.includes(key));
+  const hasAssignedTask = userHasTaskInProjectForChat(user, projectId);
+
+  return isProjectMember || hasAssignedTask;
+}
+
+function getRoomLastReadAt(roomId, userId) {
+  try {
+    const row = db
+      .prepare(
+        `
+        SELECT last_read_at
+        FROM chat_room_reads
+        WHERE room_id = ?
+          AND CAST(user_id AS TEXT) = CAST(? AS TEXT)
+        LIMIT 1
+      `
+      )
+      .get(roomId, userId);
+
+    return row?.last_read_at || "";
+  } catch {
+    return "";
+  }
+}
+
+function getUnreadRoomCount(roomId, userId) {
+  try {
+    const lastReadAt = getRoomLastReadAt(roomId, userId);
+
+    if (!lastReadAt) {
+      const row = db
+        .prepare(
+          `
+          SELECT COUNT(*) AS count
+          FROM chat_room_messages
+          WHERE room_id = ?
+            AND CAST(sender_id AS TEXT) != CAST(? AS TEXT)
+        `
+        )
+        .get(roomId, userId);
+
+      return Number(row?.count || 0);
+    }
+
+    const row = db
+      .prepare(
+        `
+        SELECT COUNT(*) AS count
+        FROM chat_room_messages
+        WHERE room_id = ?
+          AND CAST(sender_id AS TEXT) != CAST(? AS TEXT)
+          AND datetime(created_at) > datetime(?)
+      `
+      )
+      .get(roomId, userId, lastReadAt);
+
+    return Number(row?.count || 0);
+  } catch {
+    return 0;
+  }
+}
+
+function markChatRoomAsRead(roomId, userId) {
+  try {
+    const now = getChatTimestamp();
+
+    const existing = db
+      .prepare(
+        `
+        SELECT id
+        FROM chat_room_reads
+        WHERE room_id = ?
+          AND CAST(user_id AS TEXT) = CAST(? AS TEXT)
+        LIMIT 1
+      `
+      )
+      .get(roomId, userId);
+
+    if (existing) {
+      db.prepare(
+        `
+        UPDATE chat_room_reads
+        SET last_read_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `
+      ).run(now, now, existing.id);
+    } else {
+      db.prepare(
+        `
+        INSERT INTO chat_room_reads (
+          room_id,
+          user_id,
+          last_read_at,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?)
+      `
+      ).run(roomId, userId, now, now, now);
+    }
+  } catch (error) {
+    console.warn("Mark chat room read error:", error?.message);
+  }
+}
+
+function getVisibleChatRooms(user) {
+  const projects = getAllProjectsForChatRooms();
+
+  const rooms = [
+    {
+  id: "general",
+  roomId: "general",
+  type: "general",
+  roomType: "general",
+  name: "General Chat",
+  title: "General Chat",
+  subtitle: "Company-wide discussion",
+  initials: "GC",
+  projectId: "",
+  unreadCount: getUnreadRoomCount("general", user.id),
+  unread_count: getUnreadRoomCount("general", user.id),
+},
+  ];
+
+  projects.forEach((project, index) => {
+    if (!userCanAccessProjectRoom(user, project)) return;
+
+    const projectId = getProjectIdForChat(project);
+
+    rooms.push({
+  id: `project-${projectId}`,
+  roomId: `project-${projectId}`,
+  type: "project",
+  roomType: "project",
+  name: getProjectNameForChat(project, index),
+  title: getProjectNameForChat(project, index),
+  subtitle: getProjectDepartmentForChat(project) || "Project Chat",
+  initials: "PC",
+  projectId,
+  unreadCount: getUnreadRoomCount(`project-${projectId}`, user.id),
+  unread_count: getUnreadRoomCount(`project-${projectId}`, user.id),
+});
+  });
+
+  return rooms;
+}
+
+function getChatRoomByIdForUser(roomId, user) {
+  const cleanRoomId = String(roomId || "").trim();
+
+  if (cleanRoomId === "general") {
+    return {
+      id: "general",
+      roomId: "general",
+      type: "general",
+      roomType: "general",
+      name: "General Chat",
+      title: "General Chat",
+      subtitle: "Company-wide discussion",
+      projectId: "",
+    };
+  }
+
+  if (!cleanRoomId.startsWith("project-")) {
+    return null;
+  }
+
+  const projectId = cleanRoomId.replace("project-", "");
+
+  const project = getAllProjectsForChatRooms().find(
+    (item) => String(getProjectIdForChat(item)) === String(projectId)
+  );
+
+  if (!project) return null;
+
+  if (!userCanAccessProjectRoom(user, project)) return null;
+
+  return {
+    id: `project-${projectId}`,
+    roomId: `project-${projectId}`,
+    type: "project",
+    roomType: "project",
+    name: getProjectNameForChat(project),
+    title: getProjectNameForChat(project),
+    subtitle: getProjectDepartmentForChat(project) || "Project Chat",
+    projectId,
+  };
+}
+
+function normalizeChatRoomMessageForResponse(message, currentUserId) {
+  if (!message) return null;
+
+  const sender = getChatUserById(message.sender_id);
+
+  const senderName =
+    sender?.name ||
+    sender?.full_name ||
+    sender?.email ||
+    message.sender_name ||
+    "User";
+
+  return {
+    ...message,
+
+    id: String(message.id),
+    messageId: String(message.id),
+
+    roomId: message.room_id || "",
+    room_id: message.room_id || "",
+    roomType: message.room_type || "",
+    room_type: message.room_type || "",
+
+    senderId: String(message.sender_id || ""),
+    sender_id: String(message.sender_id || ""),
+    senderName,
+    sender_name: senderName,
+
+    text: message.message_text || "",
+    messageText: message.message_text || "",
+    message_text: message.message_text || "",
+
+    mine: String(message.sender_id) === String(currentUserId),
+
+    createdAt: message.created_at || "",
+    created_at: message.created_at || "",
+
+    hasAttachment: Boolean(message.attachment_path),
+    has_attachment: Boolean(message.attachment_path),
+
+    attachmentFilename: message.attachment_filename || "",
+    attachment_filename: message.attachment_filename || "",
+
+    attachmentOriginalName: message.attachment_original_name || "",
+    attachment_original_name: message.attachment_original_name || "",
+
+    attachmentMimeType: message.attachment_mime_type || "",
+    attachment_mime_type: message.attachment_mime_type || "",
+
+    attachmentSize: Number(message.attachment_size || 0),
+    attachment_size: Number(message.attachment_size || 0),
+
+    attachmentUrl: `/api/chat/rooms/messages/${message.id}/attachment`,
+    attachment_url: `/api/chat/rooms/messages/${message.id}/attachment`,
+  };
+}
+
+ensureChatRoomMessagesTable();
+
+app.get("/api/chat/rooms", authRequired, (req, res) => {
+  try {
+    ensureChatRoomMessagesTable();
+
+    const rooms = getVisibleChatRooms(req.user);
+
+    res.json({
+      success: true,
+      rooms,
+    });
+  } catch (error) {
+    console.error("Get chat rooms error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load chat rooms.",
+    });
+  }
+});
+
+app.get("/api/chat/rooms/:roomId/messages", authRequired, (req, res) => {
+  try {
+    ensureChatRoomMessagesTable();
+
+    const room = getChatRoomByIdForUser(req.params.roomId, req.user);
+
+    if (!room) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot access this chat room.",
+      });
+    }
+
+    const messages = db
+      .prepare(
+        `
+        SELECT *
+        FROM chat_room_messages
+        WHERE room_id = ?
+        ORDER BY created_at ASC, id ASC
+      `
+      )
+      .all(room.id)
+      .map((message) =>
+        normalizeChatRoomMessageForResponse(message, req.user.id)
+      )
+      .filter(Boolean);
+      markChatRoomAsRead(room.id, req.user.id);
+
+    res.json({
+      success: true,
+      room,
+      messages,
+    });
+  } catch (error) {
+    console.error("Get chat room messages error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load room messages.",
+    });
+  }
+});
+
+app.post(
+  "/api/chat/rooms/:roomId/messages",
+  authRequired,
+  uploadChatAttachment,
+  (req, res) => {
+    try {
+      ensureChatRoomMessagesTable();
+
+      const room = getChatRoomByIdForUser(req.params.roomId, req.user);
+
+      if (!room) {
+        return res.status(403).json({
+          success: false,
+          message: "You cannot access this chat room.",
+        });
+      }
+
+      const body = req.body || {};
+      const messageText = String(
+        body.messageText || body.message_text || body.text || ""
+      ).trim();
+
+      if (!messageText && !req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "Type a message or attach a file.",
+        });
+      }
+
+      const now = getChatTimestamp();
+      const file = req.file || null;
+
+      const result = db
+        .prepare(
+          `
+          INSERT INTO chat_room_messages (
+            room_id,
+            room_type,
+            project_id,
+            sender_id,
+            message_text,
+            attachment_filename,
+            attachment_original_name,
+            attachment_path,
+            attachment_mime_type,
+            attachment_size,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+        )
+        .run(
+          room.id,
+          room.type,
+          room.projectId || null,
+          req.user.id,
+          messageText,
+          file?.filename || "",
+          file?.originalname || "",
+          file?.path || "",
+          file?.mimetype || "",
+          file?.size || 0,
+          now,
+          now
+        );
+
+      const message = db
+        .prepare("SELECT * FROM chat_room_messages WHERE id = ?")
+        .get(result.lastInsertRowid);
+
+      res.json({
+        success: true,
+        room,
+        message: normalizeChatRoomMessageForResponse(message, req.user.id),
+      });
+    } catch (error) {
+      console.error("Send chat room message error:", error);
+
+      if (req.file?.path) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch {
+          // ignore cleanup failure
+        }
+      }
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to send room message.",
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/chat/rooms/messages/:messageId/attachment",
+  authRequired,
+  (req, res) => {
+    try {
+      ensureChatRoomMessagesTable();
+
+      const message = db
+        .prepare("SELECT * FROM chat_room_messages WHERE id = ?")
+        .get(req.params.messageId);
+
+      if (!message) {
+        return res.status(404).json({
+          success: false,
+          message: "Message not found.",
+        });
+      }
+
+      const room = getChatRoomByIdForUser(message.room_id, req.user);
+
+      if (!room) {
+        return res.status(403).json({
+          success: false,
+          message: "You cannot access this attachment.",
+        });
+      }
+
+      if (!message.attachment_path) {
+        return res.status(404).json({
+          success: false,
+          message: "No attachment found for this message.",
+        });
+      }
+
+      if (!fs.existsSync(message.attachment_path)) {
+        return res.status(404).json({
+          success: false,
+          message: "Attachment file is missing from server.",
+        });
+      }
+
+      res.download(
+        message.attachment_path,
+        message.attachment_original_name ||
+          message.attachment_filename ||
+          "chat-room-attachment"
+      );
+    } catch (error) {
+      console.error("Download chat room attachment error:", error);
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to download attachment.",
+      });
+    }
+  }
+);
+
+/* ---------------- CHAT MESSAGE EDIT / DELETE ---------------- */
+
+app.patch("/api/chat/messages/:messageId", authRequired, (req, res) => {
+  try {
+    const messageId = req.params.messageId;
+    const messageText = String(
+      req.body?.messageText || req.body?.message_text || req.body?.text || ""
+    ).trim();
+
+    const message = db
+      .prepare("SELECT * FROM chat_messages WHERE id = ?")
+      .get(messageId);
+
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found.",
+      });
+    }
+
+    if (String(message.sender_id) !== String(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can edit only your own message.",
+      });
+    }
+
+    if (!messageText && !message.attachment_path) {
+      return res.status(400).json({
+        success: false,
+        message: "Message text cannot be empty.",
+      });
+    }
+
+    const now = getChatTimestamp();
+
+    db.prepare(
+      `
+      UPDATE chat_messages
+      SET message_text = ?,
+          updated_at = ?
+      WHERE id = ?
+    `
+    ).run(messageText, now, message.id);
+
+    const updated = db
+      .prepare("SELECT * FROM chat_messages WHERE id = ?")
+      .get(message.id);
+
+    res.json({
+      success: true,
+      message: normalizeChatMessageForResponse(updated, req.user.id),
+    });
+  } catch (error) {
+    console.error("Edit direct chat message error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to edit message.",
+    });
+  }
+});
+
+app.delete("/api/chat/messages/:messageId", authRequired, (req, res) => {
+  try {
+    const messageId = req.params.messageId;
+
+    const message = db
+      .prepare("SELECT * FROM chat_messages WHERE id = ?")
+      .get(messageId);
+
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found.",
+      });
+    }
+
+    if (String(message.sender_id) !== String(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can delete only your own message.",
+      });
+    }
+
+    if (message.attachment_path && fs.existsSync(message.attachment_path)) {
+      try {
+        fs.unlinkSync(message.attachment_path);
+      } catch {
+        // ignore file cleanup failure
+      }
+    }
+
+    db.prepare("DELETE FROM chat_messages WHERE id = ?").run(message.id);
+
+    res.json({
+      success: true,
+      message: "Message deleted.",
+      deletedId: String(message.id),
+    });
+  } catch (error) {
+    console.error("Delete direct chat message error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete message.",
+    });
+  }
+});
+
+app.patch("/api/chat/rooms/messages/:messageId", authRequired, (req, res) => {
+  try {
+    ensureChatRoomMessagesTable();
+
+    const messageId = req.params.messageId;
+    const messageText = String(
+      req.body?.messageText || req.body?.message_text || req.body?.text || ""
+    ).trim();
+
+    const message = db
+      .prepare("SELECT * FROM chat_room_messages WHERE id = ?")
+      .get(messageId);
+
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found.",
+      });
+    }
+
+    if (String(message.sender_id) !== String(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can edit only your own message.",
+      });
+    }
+
+    const room = getChatRoomByIdForUser(message.room_id, req.user);
+
+    if (!room) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot access this chat room.",
+      });
+    }
+
+    if (!messageText && !message.attachment_path) {
+      return res.status(400).json({
+        success: false,
+        message: "Message text cannot be empty.",
+      });
+    }
+
+    const now = getChatTimestamp();
+
+    db.prepare(
+      `
+      UPDATE chat_room_messages
+      SET message_text = ?,
+          updated_at = ?
+      WHERE id = ?
+    `
+    ).run(messageText, now, message.id);
+
+    const updated = db
+      .prepare("SELECT * FROM chat_room_messages WHERE id = ?")
+      .get(message.id);
+
+    res.json({
+      success: true,
+      message: normalizeChatRoomMessageForResponse(updated, req.user.id),
+    });
+  } catch (error) {
+    console.error("Edit room chat message error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to edit room message.",
+    });
+  }
+});
+
+app.delete("/api/chat/rooms/messages/:messageId", authRequired, (req, res) => {
+  try {
+    ensureChatRoomMessagesTable();
+
+    const messageId = req.params.messageId;
+
+    const message = db
+      .prepare("SELECT * FROM chat_room_messages WHERE id = ?")
+      .get(messageId);
+
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: "Message not found.",
+      });
+    }
+
+    if (String(message.sender_id) !== String(req.user.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can delete only your own message.",
+      });
+    }
+
+    const room = getChatRoomByIdForUser(message.room_id, req.user);
+
+    if (!room) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot access this chat room.",
+      });
+    }
+
+    if (message.attachment_path && fs.existsSync(message.attachment_path)) {
+      try {
+        fs.unlinkSync(message.attachment_path);
+      } catch {
+        // ignore file cleanup failure
+      }
+    }
+
+    db.prepare("DELETE FROM chat_room_messages WHERE id = ?").run(message.id);
+
+    res.json({
+      success: true,
+      message: "Message deleted.",
+      deletedId: String(message.id),
+    });
+  } catch (error) {
+    console.error("Delete room chat message error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete room message.",
+    });
+  }
+});
 
 app.use((req, res) => {
   res.status(404).json({
@@ -8491,6 +9618,71 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000);
 
+
+ensureColumn("tasks", "reviewed_by", "INTEGER");
+ensureColumn("tasks", "reviewed_at", "TEXT");
+ensureColumn("tasks", "review_comment", "TEXT");
+
+app.patch("/api/employee/tasks/:taskId/review", authRequired, requireAdmin, (req, res) => {
+  try {
+    const taskId = req.params.taskId;
+    const approved = Boolean(req.body.approved);
+    const remark = String(
+      req.body.remark || req.body.reviewComment || req.body.review_comment || ""
+    ).trim();
+
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
+
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: "Task not found.",
+      });
+    }
+
+    const nowIST = getIndianTimestamp();
+    const nextStatus = approved ? "Completed" : "In Progress";
+    const completedAt = approved ? nowIST : null;
+
+    db.prepare(
+      `
+      UPDATE tasks
+      SET status = ?,
+          completed_at = ?,
+          reviewed_by = ?,
+          reviewed_at = ?,
+          review_comment = ?,
+          updated_at = ?
+      WHERE id = ?
+    `
+    ).run(
+      nextStatus,
+      completedAt,
+      req.user.id,
+      nowIST,
+      remark,
+      nowIST,
+      taskId
+    );
+
+    const updated = getTaskWithSubtasks(taskId);
+
+    recalculateProjectProgress(updated.project_id);
+
+    res.json({
+      success: true,
+      message: approved ? "Task approved." : "Task sent back.",
+      task: updated,
+    });
+  } catch (error) {
+    console.error("Review employee task error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to review task.",
+    });
+  }
+});
 
 app.listen(PORT, () => {
   console.log("--------------------------------------------------");

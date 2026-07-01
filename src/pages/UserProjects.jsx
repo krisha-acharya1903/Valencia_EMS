@@ -148,8 +148,8 @@ function getProjectStats(project) {
     total > 0
       ? Math.round((completed / total) * 100)
       : explicitProgress !== undefined && explicitProgress !== null
-        ? Math.max(0, Math.min(100, Number(explicitProgress) || 0))
-        : 0;
+      ? Math.max(0, Math.min(100, Number(explicitProgress) || 0))
+      : 0;
 
   return {
     total,
@@ -215,10 +215,10 @@ function getVisibleAssignees(project) {
         index % 4 === 0
           ? "bg-[#6675ff]"
           : index % 4 === 1
-            ? "bg-[#ff6b35]"
-            : index % 4 === 2
-              ? "bg-[#35c6ad]"
-              : "bg-[#cfd6e4]",
+          ? "bg-[#ff6b35]"
+          : index % 4 === 2
+          ? "bg-[#35c6ad]"
+          : "bg-[#cfd6e4]",
     };
   });
 }
@@ -248,7 +248,6 @@ function getSearchText(project, index) {
             task?.task_title,
             task?.description,
             task?.status,
-            task?.priority,
             task?.end_date,
             task?.endDate,
             task?.dueDate,
@@ -265,7 +264,6 @@ function getSearchText(project, index) {
     project?.departmentName,
     project?.division,
     project?.status,
-    project?.priority,
     project?.endDate,
     project?.end_date,
     project?.deadline,
@@ -600,7 +598,7 @@ export default function UserProjects() {
 
           <p className="mt-2 max-w-[430px] text-[14px] font-semibold leading-6 text-[#777]">
             {searchTerm.trim()
-              ? "Try searching with a different project name, task title, status, priority or due date."
+              ? "Try searching with a different project name, task title, status, or due date."
               : "Only projects and tasks assigned to this employee profile will appear here."}
           </p>
         </div>

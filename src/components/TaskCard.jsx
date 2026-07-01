@@ -11,7 +11,7 @@ export default function TaskCard({ task, canManage, canSubmit, canReview, onEdit
             <h3 className="text-lg font-black leading-tight text-valencia-navy">{task.title}</h3>
             <p className="mt-1 text-sm text-valencia-muted">By: {task.employee?.name || "Unassigned"}</p>
           </div>
-          <Badge value={task.priority} />
+          
         </div>
 
         <p className="mt-4 text-sm leading-6 text-valencia-ink">{task.description}</p>

@@ -9,7 +9,8 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
-import { apiGet } from "../services/api";
+import { apiGet, apiPatch } from "../services/api";
+import { useSearchParams } from "react-router-dom";
 
 function normalize(value) {
   return String(value || "")
@@ -129,7 +130,9 @@ function getLeaveReason(leave) {
 function getLeaveStatus(leave) {
   return leave?.status || "pending";
 }
-
+function getLeaveId(leave) {
+  return String(leave?.id || leave?.leaveId || leave?.leave_id || "");
+}
 function getRecordDate(record) {
   return (
     record?.date ||
@@ -340,9 +343,10 @@ async function tryApiGet(paths) {
 
   return [];
 }
-
 export default function AttendanceManagement() {
   const { profile } = useAuth();
+  const [searchParams] = useSearchParams();
+
 
   const [users, setUsers] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
@@ -352,6 +356,7 @@ export default function AttendanceManagement() {
   const [activeCard, setActiveCard] = useState("attendance");
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [reviewingLeaveId, setReviewingLeaveId] = useState("");
 
   const loadAttendanceData = async () => {
     setLoading(true);
@@ -433,6 +438,19 @@ export default function AttendanceManagement() {
   useEffect(() => {
     loadAttendanceData();
   }, [profile]);
+
+  useEffect(() => {
+  const tab = searchParams.get("tab");
+
+  if (
+    tab === "attendance" ||
+    tab === "app-login" ||
+    tab === "pending-leave" ||
+    tab === "leave-history"
+  ) {
+    setActiveCard(tab);
+  }
+}, [searchParams]);
 
   const employeeReports = useMemo(() => {
     return users.map((user) => {
@@ -626,6 +644,61 @@ export default function AttendanceManagement() {
     setSelectedEmployee(null);
   };
 
+  async function reviewLeave(leave, status) {
+  const leaveId = getLeaveId(leave);
+
+  if (!leaveId) {
+    toast.error("Leave request ID missing.");
+    return;
+  }
+
+  let adminComment = "";
+
+  if (status === "rejected") {
+    adminComment = window.prompt("Enter rejection reason:");
+
+    if (!adminComment || !adminComment.trim()) {
+      toast.error("Rejection reason is required.");
+      return;
+    }
+  }
+
+  try {
+    setReviewingLeaveId(leaveId);
+
+    const response = await apiPatch(`/leave-requests/${leaveId}/review`, {
+      status,
+      adminComment,
+      admin_comment: adminComment,
+    });
+
+    const updatedLeave = response?.leaveRequest || response?.leave;
+
+    setLeaveRecords((current) =>
+      current.map((item) =>
+        String(getLeaveId(item)) === String(leaveId)
+          ? {
+              ...item,
+              ...updatedLeave,
+              status,
+              adminComment,
+              admin_comment: adminComment,
+            }
+          : item
+      )
+    );
+
+    toast.success(
+      status === "approved" ? "Leave approved." : "Leave rejected."
+    );
+  } catch (error) {
+    console.error("Leave review error:", error);
+    toast.error(error?.message || "Failed to update leave request.");
+  } finally {
+    setReviewingLeaveId("");
+  }
+}
+
   return (
     <main className="page-shell">
       <div className="mobile-frame space-y-5">
@@ -699,12 +772,14 @@ export default function AttendanceManagement() {
 
         {activeCard === "pending-leave" ? (
           <LeaveTable
-            title="Pending Leave"
-            subtitle="Pending leave requests from employees."
-            leaves={pendingLeaves}
-            users={users}
-            emptyText="No pending leave requests found."
-          />
+  title="Pending Leave"
+  subtitle="Pending leave requests from employees."
+  leaves={pendingLeaves}
+  users={users}
+  emptyText="No pending leave requests found."
+  onReview={reviewLeave}
+  reviewingLeaveId={reviewingLeaveId}
+/>
         ) : null}
 
         {activeCard === "leave-history" ? (
@@ -930,74 +1005,17 @@ function AttendanceReports({
   );
 }
 
-function AppLoginReports({ search, setSearch, employees, loading }) {
-  return (
-    <section className="card overflow-hidden">
-      <div className="border-b border-valencia-line p-5">
-        <h2 className="text-2xl font-black text-valencia-navy">
-          App Login Employees
-        </h2>
+function LeaveTable({
+  title,
+  subtitle,
+  leaves,
+  users,
+  emptyText,
+  onReview,
+  reviewingLeaveId,
+}) {
+  const showActions = typeof onReview === "function";
 
-        <p className="muted mt-1 text-sm">
-          Employees who have app login activity.
-        </p>
-
-        <SearchBox search={search} setSearch={setSearch} />
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-valencia-line bg-slate-50 text-xs uppercase tracking-[0.12em] text-valencia-muted">
-              <th className="px-4 py-4">Employee</th>
-              <th className="px-4 py-4">Email</th>
-              <th className="px-4 py-4">Login Days</th>
-              <th className="px-4 py-4">Login Records</th>
-              <th className="px-4 py-4">Last Login</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {employees.map((employee) => (
-              <tr
-                key={employee.id || employee.email}
-                className="border-b border-valencia-line transition hover:bg-orange-50/30"
-              >
-                <td className="px-4 py-4 font-black text-valencia-navy">
-                  {employee.name}
-                </td>
-
-                <td className="px-4 py-4 font-semibold text-valencia-muted">
-                  {employee.email}
-                </td>
-
-                <td className="px-4 py-4 font-black text-valencia-navy">
-                  {employee.loginDays}
-                </td>
-
-                <td className="px-4 py-4 font-semibold text-valencia-muted">
-                  {employee.loginRecords}
-                </td>
-
-                <td className="px-4 py-4 font-semibold text-valencia-muted">
-                  {employee.lastLogin ? formatDateTime(employee.lastLogin) : "-"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {!employees.length ? (
-          <div className="p-8 text-center text-sm font-semibold text-valencia-muted">
-            {loading ? "Loading app login records..." : "No app login data found."}
-          </div>
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
-function LeaveTable({ title, subtitle, leaves, users, emptyText }) {
   return (
     <section className="card overflow-hidden">
       <div className="border-b border-valencia-line p-5">
@@ -1017,50 +1035,83 @@ function LeaveTable({ title, subtitle, leaves, users, emptyText }) {
               <th className="px-4 py-4">To</th>
               <th className="px-4 py-4">Reason</th>
               <th className="px-4 py-4">Status</th>
+              {showActions ? <th className="px-4 py-4">Action</th> : null}
             </tr>
           </thead>
 
           <tbody>
-            {leaves.map((leave, index) => (
-              <tr
-                key={leave?.id || leave?.leaveId || index}
-                className="border-b border-valencia-line transition hover:bg-orange-50/30"
-              >
-                <td className="px-4 py-4 font-black text-valencia-navy">
-                  {getLeaveEmployeeName(leave, users)}
-                </td>
+            {leaves.map((leave, index) => {
+              const leaveId = getLeaveId(leave);
+              const isReviewing =
+                String(reviewingLeaveId) === String(leaveId);
 
-                <td className="px-4 py-4 font-semibold text-valencia-muted">
-                  {getLeaveEmployeeEmail(leave, users)}
-                </td>
+              return (
+                <tr
+                  key={leaveId || index}
+                  className="border-b border-valencia-line transition hover:bg-orange-50/30"
+                >
+                  <td className="px-4 py-4 font-black text-valencia-navy">
+                    {getLeaveEmployeeName(leave, users)}
+                  </td>
 
-                <td className="px-4 py-4 font-semibold text-valencia-muted">
-                  {getLeaveType(leave)}
-                </td>
+                  <td className="px-4 py-4 font-semibold text-valencia-muted">
+                    {getLeaveEmployeeEmail(leave, users)}
+                  </td>
 
-                <td className="px-4 py-4 font-semibold text-valencia-muted">
-                  {formatDate(getLeaveFromDate(leave))}
-                </td>
+                  <td className="px-4 py-4 font-semibold text-valencia-muted">
+                    {getLeaveType(leave)}
+                  </td>
 
-                <td className="px-4 py-4 font-semibold text-valencia-muted">
-                  {formatDate(getLeaveToDate(leave))}
-                </td>
+                  <td className="px-4 py-4 font-semibold text-valencia-muted">
+                    {formatDate(getLeaveFromDate(leave))}
+                  </td>
 
-                <td className="px-4 py-4 font-semibold text-valencia-muted">
-                  {getLeaveReason(leave)}
-                </td>
+                  <td className="px-4 py-4 font-semibold text-valencia-muted">
+                    {formatDate(getLeaveToDate(leave))}
+                  </td>
 
-                <td className="px-4 py-4">
-                  <span
-                    className={`rounded-full px-3 py-1 text-xs font-black uppercase ${getStatusClass(
-                      getLeaveStatus(leave)
-                    )}`}
-                  >
-                    {formatStatus(getLeaveStatus(leave))}
-                  </span>
-                </td>
-              </tr>
-            ))}
+                  <td className="max-w-[260px] px-4 py-4 font-semibold text-valencia-muted">
+                    <span className="line-clamp-2">
+                      {getLeaveReason(leave)}
+                    </span>
+                  </td>
+
+                  <td className="px-4 py-4">
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-black uppercase ${getStatusClass(
+                        getLeaveStatus(leave)
+                      )}`}
+                    >
+                      {formatStatus(getLeaveStatus(leave))}
+                    </span>
+                  </td>
+
+                  {showActions ? (
+                    <td className="px-4 py-4">
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={isReviewing}
+                          onClick={() => onReview(leave, "approved")}
+                          className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-black text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          Approve
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={isReviewing}
+                          onClick={() => onReview(leave, "rejected")}
+                          className="rounded-lg bg-red-600 px-3 py-2 text-xs font-black text-white transition hover:bg-red-700 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </td>
+                  ) : null}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
 

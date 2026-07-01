@@ -61,7 +61,7 @@ export default function WorkProgressKanban({ tasks, onSelectTask, onStatusChange
                 >
                   <div className="flex items-start justify-between gap-2">
                     <p className="font-bold leading-tight">{task.title}</p>
-                    <Badge value={task.priority} />
+                    
                   </div>
                   <p className="mt-2 text-xs text-valencia-muted">{task.employee?.name || "Unassigned"} - {task.project?.department}</p>
                   <p className="mt-1 text-xs text-valencia-muted">{task.project?.name}</p>

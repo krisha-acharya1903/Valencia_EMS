@@ -203,6 +203,8 @@ ensureTableColumn("tasks", "completed_at", "TEXT");
 ensureTableColumn("tasks", "updated_at", "TEXT");
 ensureTableColumn("tasks", "reviewed_at", "TEXT");
 ensureTableColumn("tasks", "reviewed_by", "INTEGER");
+ensureTableColumn("tasks", "review_remark", "TEXT");
+ensureTableColumn("tasks", "sent_back_at", "TEXT");
 
 ensureTableColumn("projects", "progress", "INTEGER DEFAULT 0");
 ensureTableColumn("projects", "updated_at", "TEXT");
@@ -508,8 +510,17 @@ function normalizeTask(row) {
     createdAt: row.created_at || "",
     updatedAt: row.updated_at || "",
     completedAt: row.completed_at || "",
+
     reviewedAt: row.reviewed_at || "",
+    reviewed_at: row.reviewed_at || "",
     reviewedBy: row.reviewed_by || "",
+    reviewed_by: row.reviewed_by || "",
+
+    reviewRemark: row.review_remark || "",
+    review_remark: row.review_remark || "",
+    sentBackAt: row.sent_back_at || "",
+    sent_back_at: row.sent_back_at || "",
+
     subtasks: subtasks.map(normalizeSubtask),
   };
 }
@@ -1016,6 +1027,7 @@ router.patch("/tasks/:taskId/review", authRequired, requireAdmin, (req, res) => 
   try {
     const taskId = req.params.taskId;
     const approved = req.body?.approved === true;
+    const remark = String(req.body?.remark || req.body?.reviewRemark || "").trim();
 
     const task = db
       .prepare(
@@ -1035,27 +1047,62 @@ router.patch("/tasks/:taskId/review", authRequired, requireAdmin, (req, res) => 
       });
     }
 
-    const now = getIndianTimestamp();
-    const nextStatus = approved ? "Completed" : "In Progress";
+    if (!approved && !remark) {
+      return res.status(400).json({
+        success: false,
+        message: "Remark is required when sending task back.",
+      });
+    }
 
-    db.prepare(
+    const now = getIndianTimestamp();
+
+    if (approved) {
+      db.prepare(
+        `
+        UPDATE tasks
+        SET status = ?,
+            completed_at = ?,
+            reviewed_at = ?,
+            reviewed_by = ?,
+            review_remark = ?,
+            sent_back_at = ?,
+            updated_at = ?
+        WHERE id = ?
       `
-      UPDATE tasks
-      SET status = ?,
-          completed_at = ?,
-          reviewed_at = ?,
-          reviewed_by = ?,
-          updated_at = ?
-      WHERE id = ?
-    `
-    ).run(
-      nextStatus,
-      approved ? now : null,
-      now,
-      req.user.id || null,
-      now,
-      task.id
-    );
+      ).run(
+        "Completed",
+        now,
+        now,
+        req.user.id || null,
+        "",
+        "",
+        now,
+        task.id
+      );
+    } else {
+      db.prepare(
+        `
+        UPDATE tasks
+        SET status = ?,
+            completed_at = ?,
+            reviewed_at = ?,
+            reviewed_by = ?,
+            review_remark = ?,
+            sent_back_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `
+      ).run(
+        "In Progress",
+        null,
+        now,
+        req.user.id || null,
+        remark,
+        now,
+        now,
+        task.id
+      );
+    }
 
     recalculateProjectProgress(task.project_id);
 
@@ -1065,7 +1112,7 @@ router.patch("/tasks/:taskId/review", authRequired, requireAdmin, (req, res) => 
       success: true,
       message: approved
         ? "Task approved and moved to Done."
-        : "Task sent back to In Progress.",
+        : "Remark added. Task sent back to In Progress.",
       task: normalizeTask(updatedTask),
     });
   } catch (error) {

@@ -17,4 +17,8 @@ backend/valencia.db-shm
 backend/valencia.db-wal
 valencia.db
 valencia.db-shm
-valencia.db-wal
+valencia.db-walbackend/valencia.db-wal
+backend/valencia.db-shm
+backend/firebase-service-account.json
+backend/valencia.db-shm.old
+backend/valencia.db-wal.old

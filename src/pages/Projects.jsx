@@ -20,8 +20,6 @@ import { useAuth } from "../context/AuthContext";
 import * as projectService from "../services/projectService";
 import * as userService from "../services/userService";
 
-const ORANGE = "#FF6B35";
-
 function normalize(value) {
   return String(value || "")
     .toLowerCase()
@@ -115,10 +113,6 @@ function getProjectManager(project) {
     project?.lead_name ||
     "-"
   );
-}
-
-function getProjectPriority(project) {
-  return project?.priority || project?.projectPriority || "medium";
 }
 
 function getProjectStatus(project) {
@@ -664,21 +658,13 @@ function StatBox({ icon: Icon, label, value, tone, active, onClick }) {
   );
 }
 
-function ProjectModal({
-  mode,
-  open,
-  project,
-  users,
-  onClose,
-  onSave,
-}) {
+function ProjectModal({ mode, open, project, users, onClose, onSave }) {
   const [employeeSearch, setEmployeeSearch] = useState("");
   const [form, setForm] = useState({
     name: "",
     description: "",
     department: "",
     manager: "",
-    priority: "medium",
     status: "active",
     startDate: "",
     endDate: "",
@@ -693,10 +679,12 @@ function ProjectModal({
 
       setForm({
         name: getProjectName(project),
-        description: getProjectDescription(project) === "-" ? "" : getProjectDescription(project),
+        description:
+          getProjectDescription(project) === "-"
+            ? ""
+            : getProjectDescription(project),
         department: getProjectDepartment(project),
         manager: getProjectManager(project) === "-" ? "" : getProjectManager(project),
-        priority: getProjectPriority(project),
         status: getProjectStatus(project),
         startDate: getStartDate(project) || "",
         endDate: getEndDate(project) || "",
@@ -708,7 +696,6 @@ function ProjectModal({
         description: "",
         department: "",
         manager: "",
-        priority: "medium",
         status: "active",
         startDate: "",
         endDate: "",
@@ -774,7 +761,6 @@ function ProjectModal({
       departmentName: form.department.trim(),
       division: form.department.trim(),
       manager: form.manager.trim(),
-      priority: form.priority,
       status: form.status,
       startDate: form.startDate,
       endDate: form.endDate,
@@ -863,21 +849,6 @@ function ProjectModal({
                 className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
                 placeholder="Manager"
               />
-            </label>
-
-            <label>
-              <span className="mb-2 block text-xs font-black uppercase tracking-[0.12em] text-slate-500">
-                Priority
-              </span>
-              <select
-                value={form.priority}
-                onChange={(event) => updateField("priority", event.target.value)}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-[#061638] outline-none focus:border-[#FF6B35]"
-              >
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-              </select>
             </label>
 
             <label>
@@ -1043,8 +1014,8 @@ export default function Projects() {
       ]);
 
       const nextProjects = extractArray(projectResponse);
-setProjects(nextProjects);
-syncProjectAssignmentCache(nextProjects);
+      setProjects(nextProjects);
+      syncProjectAssignmentCache(nextProjects);
       setUsers(extractArray(userResponse).filter(isEmployeeLike));
     } catch (error) {
       console.error("Projects load error:", error);
@@ -1099,9 +1070,7 @@ syncProjectAssignmentCache(nextProjects);
       const searchable = normalize(
         `${getProjectName(project, index)} ${getProjectDescription(
           project
-        )} ${getProjectDepartment(project)} ${getProjectManager(project)} ${getProjectPriority(
-          project
-        )}`
+        )} ${getProjectDepartment(project)} ${getProjectManager(project)}`
       );
 
       const matchesSearch = !query || searchable.includes(query);
@@ -1122,77 +1091,77 @@ syncProjectAssignmentCache(nextProjects);
     setModalOpen(true);
   }
 
-async function saveProject(payload) {
-  setSaving(true);
+  async function saveProject(payload) {
+    setSaving(true);
 
-  try {
-    if (modalMode === "edit" && editingProject) {
-      const projectIndex = projects.findIndex((item) => item === editingProject);
-      const projectId = getProjectId(editingProject, projectIndex);
+    try {
+      if (modalMode === "edit" && editingProject) {
+        const projectIndex = projects.findIndex((item) => item === editingProject);
+        const projectId = getProjectId(editingProject, projectIndex);
 
-      const response = await updateProjectRecord(projectId, payload, profile);
+        const response = await updateProjectRecord(projectId, payload, profile);
 
-      const finalProject =
-        response && typeof response === "object"
-          ? {
-              ...editingProject,
-              ...response,
-              ...payload,
+        const finalProject =
+          response && typeof response === "object"
+            ? {
+                ...editingProject,
+                ...response,
+                ...payload,
+              }
+            : {
+                ...editingProject,
+                ...payload,
+              };
+
+        setProjects((current) =>
+          current.map((project, index) => {
+            const currentId = getProjectId(project, index);
+
+            if (currentId === projectId || project === editingProject) {
+              return finalProject;
             }
-          : {
-              ...editingProject,
-              ...payload,
-            };
 
-      setProjects((current) =>
-        current.map((project, index) => {
-          const currentId = getProjectId(project, index);
+            return project;
+          })
+        );
 
-          if (currentId === projectId || project === editingProject) {
-            return finalProject;
-          }
+        upsertProjectAssignmentCache(finalProject, projectIndex);
 
-          return project;
-        })
-      );
+        toast.success("Project updated.");
+      } else {
+        const newProject = {
+          id: `project-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          ...payload,
+        };
 
-      upsertProjectAssignmentCache(finalProject, projectIndex);
+        const response = await createProjectRecord(newProject, profile);
 
-      toast.success("Project updated.");
-    } else {
-      const newProject = {
-        id: `project-${Date.now()}`,
-        createdAt: new Date().toISOString(),
-        ...payload,
-      };
+        const finalProject =
+          response && typeof response === "object"
+            ? {
+                ...newProject,
+                ...response,
+                ...payload,
+              }
+            : newProject;
 
-      const response = await createProjectRecord(newProject, profile);
+        setProjects((current) => [...current, finalProject]);
 
-      const finalProject =
-        response && typeof response === "object"
-          ? {
-              ...newProject,
-              ...response,
-              ...payload,
-            }
-          : newProject;
+        upsertProjectAssignmentCache(finalProject, projects.length);
 
-      setProjects((current) => [...current, finalProject]);
+        toast.success("Project created.");
+      }
 
-      upsertProjectAssignmentCache(finalProject, projects.length);
-
-      toast.success("Project created.");
+      setModalOpen(false);
+      setEditingProject(null);
+    } catch (error) {
+      console.error("Project save error:", error);
+      toast.error(error?.message || "Failed to save project.");
+    } finally {
+      setSaving(false);
     }
-
-    setModalOpen(false);
-    setEditingProject(null);
-  } catch (error) {
-    console.error("Project save error:", error);
-    toast.error(error?.message || "Failed to save project.");
-  } finally {
-    setSaving(false);
   }
-}
 
   async function updateProjectStatus(project, nextStatus) {
     const projectIndex = projects.findIndex((item) => item === project);
@@ -1200,7 +1169,8 @@ async function saveProject(payload) {
 
     const payload = {
       status: nextStatus,
-      deletedAt: nextStatus === "deleted" ? new Date().toISOString() : project?.deletedAt || "",
+      deletedAt:
+        nextStatus === "deleted" ? new Date().toISOString() : project?.deletedAt || "",
     };
 
     try {
@@ -1618,10 +1588,6 @@ function ProjectGrid({
                   >
                     {getStatusLabel(status)}
                   </span>
-
-                  <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-black uppercase text-blue-600">
-                    {getProjectPriority(project)}
-                  </span>
                 </div>
 
                 <h3 className="text-2xl font-black leading-tight text-[#061638]">
@@ -1635,10 +1601,26 @@ function ProjectGrid({
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <InfoBlock icon={Briefcase} label="Department" value={getProjectDepartment(project)} />
-              <InfoBlock icon={UsersRound} label="Manager" value={getProjectManager(project)} />
-              <InfoBlock icon={CalendarDays} label="Timeline" value={getTimeline(project)} />
-              <InfoBlock icon={UserPlus} label="Members" value={`${memberCount} assigned`} />
+              <InfoBlock
+                icon={Briefcase}
+                label="Department"
+                value={getProjectDepartment(project)}
+              />
+              <InfoBlock
+                icon={UsersRound}
+                label="Manager"
+                value={getProjectManager(project)}
+              />
+              <InfoBlock
+                icon={CalendarDays}
+                label="Timeline"
+                value={getTimeline(project)}
+              />
+              <InfoBlock
+                icon={UserPlus}
+                label="Members"
+                value={`${memberCount} assigned`}
+              />
             </div>
 
             <div className="mt-5">

@@ -1,3 +1,4 @@
+import { apiGet } from "../services/api";
 import {
   BarChart3,
   Briefcase,
@@ -120,6 +121,7 @@ async function loadUsers() {
 }
 
 export default function AdminDashboard() {
+  const [pendingLeaveCount, setPendingLeaveCount] = useState(0);
   const navigate = useNavigate();
 
   const [projects, setProjects] = useState([]);
@@ -149,6 +151,44 @@ export default function AdminDashboard() {
   useEffect(() => {
     loadDashboardData();
   }, []);
+
+  useEffect(() => {
+  let active = true;
+
+  async function loadPendingLeaveCount() {
+    try {
+      const data = await apiGet("/leave-requests");
+
+      const leaves = Array.isArray(data?.leaveRequests)
+        ? data.leaveRequests
+        : Array.isArray(data?.leaves)
+        ? data.leaves
+        : Array.isArray(data)
+        ? data
+        : [];
+
+      const pendingCount = leaves.filter((leave) => {
+        return String(leave?.status || "").toLowerCase() === "pending";
+      }).length;
+
+      if (active) {
+        setPendingLeaveCount(pendingCount);
+      }
+    } catch (error) {
+      console.error("Pending leave count error:", error);
+
+      if (active) {
+        setPendingLeaveCount(0);
+      }
+    }
+  }
+
+  loadPendingLeaveCount();
+
+  return () => {
+    active = false;
+  };
+}, []);
 
   const visibleUsers = useMemo(() => {
     return users.filter(isVisibleEmployee);
@@ -203,14 +243,14 @@ export default function AdminDashboard() {
               onClick={() => navigate("/admin/projects")}
             />
 
-            <DashboardStatCard
-              icon={CalendarDays}
-              iconClass="bg-red-50 text-red-500"
-              label="Pending Approvals"
-              value="0"
-              onClick={() => navigate("/admin/attendance-management")}
-            />
-
+            
+<DashboardStatCard
+  icon={CalendarDays}
+  iconClass="bg-red-50 text-red-500"
+  label="Leave Requests"
+  value={pendingLeaveCount}
+  onClick={() => navigate("/admin/attendance-management?tab=pending-leave")}
+/>
             <DashboardStatCard
               icon={CheckCircle2}
               iconClass="bg-green-100 text-green-600"
