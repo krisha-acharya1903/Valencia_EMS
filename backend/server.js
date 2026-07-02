@@ -598,46 +598,9 @@ function requireAdminOrJayMore(req, res, next) {
   });
 }
 
-function isJayMoreAccount(user) {
-  return (
-    String(user?.email || "").trim().toLowerCase() ===
-    "jay.more@valencianutrition.com"
-  );
-}
 
-function requireAdminOrJayMore(req, res, next) {
-  if (
-    ["superAdmin", "admin"].includes(req.user.role) ||
-    isJayMoreAccount(req.user)
-  ) {
-    next();
-    return;
-  }
 
-  return res.status(403).json({
-    success: false,
-    message: "Only Admin, Super Admin, or Jay More can perform this action.",
-  });
-}
 
-function isJayMoreAccount(user) {
-  return (
-    String(user?.email || "").trim().toLowerCase() ===
-    "jay.more@valencianutrition.com"
-  );
-}
-
-function requireAdminOrJayMore(req, res, next) {
-  if (["superAdmin", "admin"].includes(req.user.role) || isJayMoreAccount(req.user)) {
-    next();
-    return;
-  }
-
-  return res.status(403).json({
-    success: false,
-    message: "Only Admin, Super Admin, or Jay More can perform this action.",
-  });
-}
 
 /* ---------------- STATUS / PROGRESS HELPERS ---------------- */
 
